@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#4f46e5">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>כריזה</title>
+<style>
+:root{--bg:#f3f4fb;--card:#fff;--text:#1b1f33;--muted:#6b7090;--accent:#4f46e5;--accent2:#7c3aed;--accent-t:#fff;--rec:#e11d48;--line:#e1e3f0;--soft:#eceefb;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1220;--card:#1a1e33;--text:#eef0fb;--muted:#9aa0c3;--accent:#8b85ff;--accent2:#b18cff;--accent-t:#0f1220;--rec:#ff6b88;--line:#2a2f4d;--soft:#242949}}
+:root[data-theme="dark"]{--bg:#0f1220;--card:#1a1e33;--text:#eef0fb;--muted:#9aa0c3;--accent:#8b85ff;--accent2:#b18cff;--accent-t:#0f1220;--rec:#ff6b88;--line:#2a2f4d;--soft:#242949}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Arial,sans-serif;font-size:18px;-webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent}
+main{max-width:560px;margin:0 auto;padding:14px 16px 28px}
+header{text-align:center;padding:10px 0 16px}
+header h1{font-size:24px;margin:0}
+header p{margin:4px 0 0;color:var(--muted);font-size:15px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:18px;margin-bottom:14px;box-shadow:0 6px 24px rgba(79,70,229,.08)}
+.micwrap{display:flex;flex-direction:column;align-items:center}
+#mic{width:min(52vw,190px);height:min(52vw,190px);border-radius:50%;border:0;background:linear-gradient(145deg,var(--accent),var(--accent2));color:var(--accent-t);cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;font-size:18px;font-weight:700;box-shadow:0 10px 30px rgba(79,70,229,.35);touch-action:manipulation;-webkit-appearance:none;font-family:inherit}
+#mic svg{width:52px;height:52px}
+#mic.rec{background:linear-gradient(145deg,var(--rec),#f97316);color:#fff;animation:p 1.1s infinite;box-shadow:0 0 0 10px rgba(225,29,72,.18)}
+@keyframes p{50%{transform:scale(1.05)}}
+#state{margin-top:14px;color:var(--muted);min-height:24px;font-size:16px;text-align:center}
+.lbl{display:block;color:var(--muted);font-size:14px;margin:0 0 8px}
+textarea{width:100%;font-size:22px;padding:14px;border-radius:16px;border:1px solid var(--line);background:var(--bg);color:var(--text);min-height:96px;font-family:inherit;resize:vertical}
+.row{display:flex;gap:8px;margin-top:10px}
+.row button{flex:1;min-height:56px;touch-action:manipulation;padding:14px;font-size:18px;border-radius:14px;border:1px solid var(--line);background:var(--soft);color:var(--text);cursor:pointer;font-family:inherit}
+.row button.p{background:linear-gradient(145deg,var(--accent),var(--accent2));color:var(--accent-t);border:0;font-weight:700;flex:2}
+.presets{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.presets button{padding:14px 6px;border-radius:14px;border:2px solid var(--line);background:var(--soft);color:var(--text);font-size:17px;font-family:inherit;cursor:pointer;touch-action:manipulation}
+.presets button.on{border-color:var(--accent);background:var(--card);font-weight:700;color:var(--accent)}
+.presets small{display:block;color:var(--muted);font-size:12px;margin-top:2px}
+details summary{cursor:pointer;color:var(--muted);font-size:16px}
+.opts{margin-top:12px}
+select,input[type=range]{width:100%;font-size:18px;padding:10px;margin:6px 0 14px;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--text)}
+.chk{display:flex;gap:10px;align-items:center;margin-bottom:12px;font-size:16px}
+.note{color:var(--muted);font-size:13px;line-height:1.5}
+</style>
+</head>
+<body>
+<main>
+<header><h1>🎙️ כריזה בקול נשי</h1><p>מדברים והמערכת מכריזה בקול אחר</p></header>
+
+<div class="card micwrap">
+  <button id="mic" type="button">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4"/></svg>
+    <span id="miclbl">לחצו ודברו</span>
+  </button>
+  <div id="state">מוכן</div>
+</div>
+
+<div class="card">
+  <span class="lbl">סגנון קול</span>
+  <div class="presets" id="presets">
+    <button type="button" data-p="woman" class="on">אישה<small>טבעי</small></button>
+    <button type="button" data-p="girl">נערה<small>גבוה יותר</small></button>
+    <button type="button" data-p="child">ילדה<small>גבוה מאוד</small></button>
+  </div>
+</div>
+
+<div class="card">
+  <label class="lbl" for="txt">המשפט</label>
+  <textarea id="txt" placeholder="המשפט שזוהה יופיע כאן. אפשר גם להקליד או להכתיב מהמקלדת."></textarea>
+  <div class="row">
+    <button class="p" id="speak" type="button">🔊 הקרא</button>
+    <button id="clear" type="button">נקה</button>
+  </div>
+</div>
+
+<div class="card">
+  <details>
+    <summary>הגדרות מתקדמות</summary>
+    <div class="opts">
+      <label class="chk"><input id="auto" type="checkbox" checked> להקריא אוטומטית אחרי הזיהוי</label>
+      <label class="chk"><input id="autokb" type="checkbox" checked> להקריא אוטומטית אחרי הכתבה מהמקלדת</label>
+      <label class="lbl" for="voice">קול</label><select id="voice"></select>
+      <label class="lbl" for="rate">מהירות</label><input id="rate" type="range" min="0.6" max="1.3" step="0.05" value="0.95">
+      <label class="lbl" for="pitch">גובה צליל</label><input id="pitch" type="range" min="0.8" max="2" step="0.05" value="1.1">
+      <div class="note">הקולות הם אלה שמותקנים במכשיר. סגנונות ״נערה״ ו״ילדה״ הם אותו קול נשי בגובה צליל גבוה יותר, ולכן הם נשמעים קצת מלאכותיים.</div>
+    </div>
+  </details>
+</div>
+</main>
+<script>
+(function(){
+  var $=function(i){return document.getElementById(i)};
+  var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  var voices=[],rec=null,listening=false;
+  var PRESETS={woman:[1.1,0.95],girl:[1.4,1.0],child:[1.8,1.05]};
+  var LS='announcer-v2';
+
+  function save(){try{localStorage.setItem(LS,JSON.stringify({p:cur,voice:$('voice').value,rate:$('rate').value,pitch:$('pitch').value,auto:$('auto').checked,autokb:$('autokb').checked}))}catch(e){}}
+  var cur='woman',saved={};
+  try{saved=JSON.parse(localStorage.getItem(LS)||'{}')}catch(e){}
+
+  function setPreset(p,skipSave){
+    cur=p;
+    [].forEach.call($('presets').children,function(b){b.classList.toggle('on',b.dataset.p===p)});
+    if(PRESETS[p]){$('pitch').value=PRESETS[p][0];$('rate').value=PRESETS[p][1]}
+    if(!skipSave)save();
+  }
+
+  function loadVoices(){
+    var all=window.speechSynthesis?speechSynthesis.getVoices():[];
+    voices=all.filter(function(v){return /^he/i.test(v.lang)||/hebrew|עברית/i.test(v.name)});
+    var s=$('voice');s.innerHTML='';
+    if(!voices.length){var o=document.createElement('option');o.textContent='לא נמצא קול עברי במכשיר';s.appendChild(o);return}
+    voices.forEach(function(v){var o=document.createElement('option');o.value=v.name;o.textContent=v.name;s.appendChild(o)});
+    var p=(saved.voice&&voices.find(function(v){return v.name===saved.voice}))||voices.find(function(v){return /carmit|hila|female/i.test(v.name)})||voices[0];
+    s.value=p.name;
+  }
+
+  function say(t){
+    t=(t||'').trim();if(!t||!window.speechSynthesis)return;
+    speechSynthesis.cancel();
+    var u=new SpeechSynthesisUtterance(t);u.lang='he-IL';
+    u.rate=parseFloat($('rate').value);u.pitch=parseFloat($('pitch').value);
+    var v=voices.find(function(x){return x.name===$('voice').value});if(v)u.voice=v;
+    u.onstart=function(){$('state').textContent='מכריז...'};
+    u.onend=u.onerror=function(){$('state').textContent='מוכן'};
+    speechSynthesis.speak(u);
+  }
+
+  function setUI(on){
+    listening=on;$('mic').classList.toggle('rec',on);
+    $('miclbl').textContent=on?'מקשיב... דברו':'לחצו ודברו';
+    if(on)$('state').textContent='מקשיב';
+  }
+
+  function start(){
+    if(!SR){$('state').textContent='הדפדפן לא תומך בזיהוי דיבור. באייפון יש לפתוח ב-Safari, באנדרואיד ב-Chrome. אפשר גם להקליד ולהקריא.';return}
+    if(listening){rec&&rec.stop();return}
+    speechSynthesis.cancel();
+    try{var k=new SpeechSynthesisUtterance(' ');k.volume=0;k.lang='he-IL';speechSynthesis.speak(k)}catch(e){}
+    try{if(navigator.wakeLock)navigator.wakeLock.request('screen').catch(function(){})}catch(e){}
+    rec=new SR();rec.lang='he-IL';rec.interimResults=true;rec.continuous=false;
+    rec.onresult=function(e){var t='';for(var i=0;i<e.results.length;i++)t+=e.results[i][0].transcript;$('txt').value=t};
+    rec.onerror=function(e){
+      setUI(false);
+      $('state').textContent=(e.error==='not-allowed'||e.error==='service-not-allowed')?'אין הרשאה למיקרופון או לזיהוי דיבור. יש לאשר בדפדפן, ובאייפון להפעיל הכתבה בהגדרות.':(e.error==='no-speech'?'לא נשמע דיבור, נסו שוב':'שגיאת זיהוי: '+e.error);
+    };
+    rec.onend=function(){setUI(false);var t=$('txt').value.trim();if(t&&$('auto').checked)say(t)};
+    try{rec.start();setUI(true)}catch(err){setUI(false)}
+  }
+
+  var lastLen=0,dictated=false,timer=null,unlocked=false;
+  function flush(){clearTimeout(timer);var go=dictated&&$('autokb').checked;dictated=false;if(go)say($('txt').value)}
+  $('txt').addEventListener('focus',function(){lastLen=this.value.length});
+  $('txt').addEventListener('input',function(e){var n=this.value.length,d=n-lastLen;lastLen=n;if(d>=2||e.inputType==='insertFromDictation')dictated=true;clearTimeout(timer);timer=setTimeout(flush,2500)});
+  $('txt').addEventListener('blur',flush);
+  function unlock(){if(unlocked||!window.speechSynthesis)return;unlocked=true;try{var k=new SpeechSynthesisUtterance(' ');k.volume=0;k.lang='he-IL';speechSynthesis.speak(k)}catch(x){}}
+  document.addEventListener('touchend',unlock,{passive:true});document.addEventListener('click',unlock);
+
+  $('mic').onclick=start;
+  $('speak').onclick=function(){say($('txt').value||'בדיקת קול. נא להגיע לשער.')};
+  $('clear').onclick=function(){$('txt').value='';$('state').textContent='מוכן'};
+  $('presets').addEventListener('click',function(e){
+    var b=e.target.closest('button');if(!b)return;
+    setPreset(b.dataset.p);say('שלום, זה הקול שנבחר.');
+  });
+  ['rate','pitch'].forEach(function(i){$(i).addEventListener('change',function(){cur='custom';[].forEach.call($('presets').children,function(b){b.classList.remove('on')});save()})});
+  ['voice','auto','autokb'].forEach(function(i){$(i).addEventListener('change',save)});
+
+  if(typeof saved.auto==='boolean')$('auto').checked=saved.auto;
+  if(typeof saved.autokb==='boolean')$('autokb').checked=saved.autokb;
+  if(saved.p&&PRESETS[saved.p])setPreset(saved.p,true);
+  else if(saved.p==='custom'){$('rate').value=saved.rate||0.95;$('pitch').value=saved.pitch||1.1;cur='custom';[].forEach.call($('presets').children,function(b){b.classList.remove('on')})}
+  if(window.speechSynthesis){loadVoices();speechSynthesis.onvoiceschanged=loadVoices;setTimeout(loadVoices,500);setTimeout(loadVoices,1500)}
+})();
+</script>
+</body>
+</html>
