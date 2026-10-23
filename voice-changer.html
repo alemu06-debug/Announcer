@@ -95,6 +95,7 @@ body.is-admin .admin{display:block}
       </div>
       <label class="chk"><input id="noise" type="checkbox"> סינון רעשי רקע (למקום רועש)</label>
       <div class="note">מהירות וגובה צליל חלים גם על "השמע שוב", כך שאפשר לכוון בלי להקליט מחדש.</div>
+      <div class="row"><button id="reset" type="button">חזרה לברירת המחדל</button></div>
       <div class="admin">
         <label class="lbl" for="worker">כתובת השירות (Cloudflare Worker)</label>
         <input id="worker" type="url" placeholder="https://....workers.dev" autocomplete="off" spellcheck="false">
@@ -238,10 +239,12 @@ var PitchShift=(function(){
   if(ADMIN)document.body.classList.add('is-admin');
 
   var $=function(i){return document.getElementById(i)};
-  var settings={noise:false,worker:'',rate:1,pitch:0,maxSec:4};
+  // Used when nothing is saved on the device yet, and by "back to defaults".
+  var DEFAULTS={rate:1,pitch:2.5,maxSec:3,noise:true};
+  var settings={noise:DEFAULTS.noise,worker:'',rate:DEFAULTS.rate,pitch:DEFAULTS.pitch,maxSec:DEFAULTS.maxSec};
   try{var s=JSON.parse(localStorage.getItem(LS)||'{}');for(var k in s)if(k in settings)settings[k]=s[k]}catch(e){}
   function clamp(v,lo,hi,def){v=Number(v);return isFinite(v)?Math.min(hi,Math.max(lo,v)):def}
-  settings.rate=clamp(settings.rate,0.6,1.3,1);settings.pitch=clamp(settings.pitch,-4,4,0);settings.maxSec=Math.round(clamp(settings.maxSec,3,8,4));
+  settings.rate=clamp(settings.rate,0.6,1.3,DEFAULTS.rate);settings.pitch=clamp(settings.pitch,-4,4,DEFAULTS.pitch);settings.maxSec=Math.round(clamp(settings.maxSec,3,8,DEFAULTS.maxSec));
   function save(){try{localStorage.setItem(LS,JSON.stringify(settings))}catch(e){}}
   function workerUrl(){return (settings.worker||WORKER_URL||'').trim().replace(/\/+$/,'')}
   function setState(t){$('state').textContent=t}
@@ -440,16 +443,26 @@ var PitchShift=(function(){
   function showRate(){showVal('rateval','×'+settings.rate.toFixed(2))}
   function showPitch(){var v=settings.pitch;showVal('pitchval',(v>0?'+':v<0?'−':'')+Math.abs(v),Math.abs(v)===1?'חצי טון':'חצאי טונים')}
   function showMax(){showVal('maxsecval',String(settings.maxSec),'שניות')}
-  $('rate').value=settings.rate;showRate();
-  $('rate').oninput=function(){settings.rate=clamp(this.value,0.6,1.3,1);showRate();save();if(playingResult)applyRate(settings.rate)};
-  $('pitch').value=settings.pitch;showPitch();
-  $('pitch').oninput=function(){settings.pitch=clamp(this.value,-4,4,0);showPitch();save()};
+  function showSettings(){
+    $('rate').value=settings.rate;showRate();
+    $('pitch').value=settings.pitch;showPitch();
+    $('maxsec').value=settings.maxSec;showMax();
+    $('noise').checked=!!settings.noise;
+  }
   // Prepare the new pitch in the background so "play again" starts right away.
-  $('pitch').onchange=function(){if(resultBlob&&settings.pitch)pitchedUrl(settings.pitch).catch(function(){})};
-  $('maxsec').value=settings.maxSec;showMax();
-  $('maxsec').oninput=function(){settings.maxSec=Math.round(clamp(this.value,3,8,4));showMax();save()};
-  $('noise').checked=!!settings.noise;
+  function preparePitch(){if(resultBlob&&settings.pitch)pitchedUrl(settings.pitch).catch(function(){})}
+  showSettings();
+  $('rate').oninput=function(){settings.rate=clamp(this.value,0.6,1.3,DEFAULTS.rate);showRate();save();if(playingResult)applyRate(settings.rate)};
+  $('pitch').oninput=function(){settings.pitch=clamp(this.value,-4,4,DEFAULTS.pitch);showPitch();save()};
+  $('pitch').onchange=preparePitch;
+  $('maxsec').oninput=function(){settings.maxSec=Math.round(clamp(this.value,3,8,DEFAULTS.maxSec));showMax();save()};
   $('noise').onchange=function(){settings.noise=this.checked;save()};
+  // Resets the four settings above; the service address is left as it is.
+  $('reset').onclick=function(){
+    for(var k in DEFAULTS)settings[k]=DEFAULTS[k];
+    save();showSettings();preparePitch();
+    if(playingResult)applyRate(settings.rate);
+  };
   $('worker').value=workerUrl();
   $('worker').onchange=function(){settings.worker=this.value.trim();save();setChip('','מוכן')};
 
