@@ -24,6 +24,9 @@ header h1{font-size:24px;margin:0}
 .micwrap{display:flex;flex-direction:column;align-items:center}
 #mic{width:min(52vw,190px);height:min(52vw,190px);border-radius:50%;border:0;background:linear-gradient(145deg,var(--accent),var(--accent2));color:var(--accent-t);cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;font-size:18px;font-weight:700;box-shadow:0 10px 30px rgba(79,70,229,.35);touch-action:manipulation;-webkit-appearance:none;font-family:inherit;padding:10px;text-align:center}
 #mic svg{width:52px;height:52px}
+#mic .count{display:none;font-size:64px;line-height:1;font-variant-numeric:tabular-nums}
+#mic.rec .count{display:block}
+#mic.rec svg{display:none}
 #mic.rec{background:linear-gradient(145deg,var(--rec),#f97316);color:#fff;animation:p 1.1s infinite;box-shadow:0 0 0 10px rgba(225,29,72,.18)}
 #mic.busy{opacity:.6;cursor:wait}
 @keyframes p{50%{transform:scale(1.05)}}
@@ -34,15 +37,20 @@ header h1{font-size:24px;margin:0}
 .row{display:flex;gap:8px;margin-top:10px}
 .row button{flex:1;min-height:56px;touch-action:manipulation;padding:12px;font-size:18px;border-radius:14px;border:1px solid var(--line);background:var(--soft);color:var(--text);cursor:pointer;font-family:inherit}
 .row button.p{background:linear-gradient(145deg,var(--accent),var(--accent2));color:var(--accent-t);border:0;font-weight:700;flex:2}
-.row button[hidden]{display:none}
 .row button:disabled{opacity:.5}
-.lbl{display:block;color:var(--muted);font-size:14px;margin:0 0 8px}
+.lbl{display:flex;justify-content:space-between;align-items:baseline;color:var(--muted);font-size:15px;margin:0 0 4px}
+.lbl output{color:var(--text);font-weight:700;font-size:17px;font-variant-numeric:tabular-nums}
 details summary{cursor:pointer;color:var(--muted);font-size:16px}
 .opts{margin-top:12px}
+.slider{margin-bottom:18px}
+.slider input{width:100%;margin:4px 0 0;direction:ltr}
+.ends{display:flex;justify-content:space-between;direction:ltr;color:var(--muted);font-size:13px}
 .chk{display:flex;gap:10px;align-items:center;margin-bottom:14px;font-size:16px}
 .chk input{width:22px;height:22px;flex:none}
 input[type=url]{width:100%;font-size:16px;padding:12px;border-radius:16px;border:1px solid var(--line);background:var(--bg);color:var(--text);font-family:inherit;direction:ltr;text-align:left}
 .note{color:var(--muted);font-size:13px;line-height:1.5;margin:6px 0 14px}
+.admin{display:none}
+body.is-admin .admin{display:block}
 </style>
 </head>
 <body>
@@ -52,10 +60,11 @@ input[type=url]{width:100%;font-size:16px;padding:12px;border-radius:16px;border
 <div class="card micwrap">
   <button id="mic" type="button">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4"/></svg>
+    <span class="count" id="count"></span>
     <span id="miclbl">לחצו כדי להקליט</span>
   </button>
   <div id="bar" hidden><i></i></div>
-  <div id="state">לחצו, אמרו משפט קצר עם השם, ולחצו שוב לסיום</div>
+  <div id="state">לחצו ואמרו משפט קצר עם השם</div>
 </div>
 
 <div class="card">
@@ -69,26 +78,170 @@ input[type=url]{width:100%;font-size:16px;padding:12px;border-radius:16px;border
   <details id="settings">
     <summary>הגדרות</summary>
     <div class="opts">
-      <label class="chk"><input id="noise" type="checkbox"> סינון רעשי רקע (מתאים למקום רועש, לוקח קצת יותר זמן)</label>
-      <label class="lbl" for="worker">כתובת השירות (Cloudflare Worker)</label>
-      <input id="worker" type="url" placeholder="https://....workers.dev" autocomplete="off" spellcheck="false">
-      <div class="note">ההקלטה נשלחת דרך השירות ל-ElevenLabs כדי להחליף את הקול, ולא נשמרת בדף. ההקלטה מוגבלת ל-15 שניות.</div>
+      <div class="slider">
+        <label class="lbl" for="rate">מהירות <output id="rateval"></output></label>
+        <input id="rate" type="range" min="0.6" max="1.3" step="0.05">
+        <div class="ends"><span>איטי</span><span>מהיר</span></div>
+      </div>
+      <div class="slider">
+        <label class="lbl" for="pitch">גובה צליל <output id="pitchval"></output></label>
+        <input id="pitch" type="range" min="-4" max="4" step="0.5">
+        <div class="ends"><span>נמוך</span><span>גבוה</span></div>
+      </div>
+      <div class="slider">
+        <label class="lbl" for="maxsec">אורך הקלטה מרבי <output id="maxsecval"></output></label>
+        <input id="maxsec" type="range" min="3" max="8" step="1">
+        <div class="ends"><span>3</span><span>8</span></div>
+      </div>
+      <label class="chk"><input id="noise" type="checkbox"> סינון רעשי רקע (למקום רועש)</label>
+      <div class="note">מהירות וגובה צליל חלים גם על "השמע שוב", כך שאפשר לכוון בלי להקליט מחדש.</div>
+      <div class="admin">
+        <label class="lbl" for="worker">כתובת השירות (Cloudflare Worker)</label>
+        <input id="worker" type="url" placeholder="https://....workers.dev" autocomplete="off" spellcheck="false">
+        <div class="note">ההקלטה נשלחת דרך השירות ל-ElevenLabs כדי להחליף את הקול, ולא נשמרת בדף. גובה הצליל מחושב במכשיר. מהירות וגובה צליל לא חלים על ההקלטה המקורית.</div>
+      </div>
     </div>
   </details>
 </div>
 </main>
 
 <script>
+// Pitch shift without changing duration: phase vocoder with identity phase locking and
+// cepstral formant preservation (so the voice keeps its character), then windowed-sinc resampling.
+var PitchShift=(function(){
+  var tables={};
+  function twiddles(n){
+    if(tables[n])return tables[n];
+    var c=new Float64Array(n/2),s=new Float64Array(n/2);
+    for(var i=0;i<n/2;i++){c[i]=Math.cos(2*Math.PI*i/n);s[i]=Math.sin(2*Math.PI*i/n)}
+    return tables[n]={c:c,s:s};
+  }
+  // In-place radix-2 complex FFT; inverse is scaled by 1/n.
+  function fft(re,im,inv){
+    var n=re.length,t=twiddles(n),i,j,k,len,half,step,a,b,cr,ci,xr,xi,tmp;
+    for(i=1,j=0;i<n;i++){
+      var bit=n>>1;for(;j&bit;bit>>=1)j^=bit;j^=bit;
+      if(i<j){tmp=re[i];re[i]=re[j];re[j]=tmp;tmp=im[i];im[i]=im[j];im[j]=tmp}
+    }
+    for(len=2;len<=n;len<<=1){
+      half=len>>1;step=n/len;
+      for(i=0;i<n;i+=len)for(k=0;k<half;k++){
+        a=i+k;b=a+half;cr=t.c[k*step];ci=inv?t.s[k*step]:-t.s[k*step];
+        xr=re[b]*cr-im[b]*ci;xi=re[b]*ci+im[b]*cr;
+        re[b]=re[a]-xr;im[b]=im[a]-xi;re[a]+=xr;im[a]+=xi;
+      }
+    }
+    if(inv)for(i=0;i<n;i++){re[i]/=n;im[i]/=n}
+  }
+  function princarg(x){return x-2*Math.PI*Math.round(x/(2*Math.PI))}
+  // Smooth spectral envelope (formants) of one frame from its real cepstrum.
+  function envelope(mag,N,q,re,im,out){
+    var h=N/2,k;
+    for(k=0;k<=h;k++){re[k]=Math.log(mag[k]+1e-9);im[k]=0}
+    for(k=1;k<h;k++){re[N-k]=re[k];im[N-k]=0}
+    fft(re,im,true);
+    for(k=0;k<N;k++){
+      var d=k<=h?k:N-k;
+      re[k]=d<q?re[k]*(d<q/2?1:0.5+0.5*Math.cos(Math.PI*(d-q/2)/(q/2))):0;im[k]=0;
+    }
+    fft(re,im,false);
+    for(k=0;k<=h;k++)out[k]=Math.exp(re[k]);
+  }
+  function shift(x,fs,semis){
+    var p=Math.pow(2,semis/12),L=x.length;
+    if(!semis||!L)return x;
+    var N=fs>32000?2048:1024,h=N/2,Hs=N/8,Ha=Hs/p,k,i;
+    var q=Math.max(8,Math.round(fs/650)); // cepstral cutoff below the pitch period of a high voice
+    var xin=new Float32Array(L+2*N);xin.set(x,N);
+    var nFrames=Math.floor((xin.length-N)/Ha)+1;
+    var y=new Float32Array(nFrames*Hs+N);
+    var w=new Float64Array(N),wss=0;
+    for(i=0;i<N;i++){w[i]=0.5-0.5*Math.cos(2*Math.PI*i/N);wss+=w[i]*w[i]}
+    var norm=Hs/wss;
+    var re=new Float64Array(N),im=new Float64Array(N),cre=new Float64Array(N),cim=new Float64Array(N);
+    var mag=new Float64Array(h+1),out=new Float64Array(h+1),phi=new Float64Array(h+1);
+    var prevPhi=new Float64Array(h+1),theta=new Float64Array(h+1),env=new Float64Array(h+1);
+    var peaks=new Int32Array(h+1),owner=new Int32Array(h+1),prevPos=0;
+    for(var m=0;m<nFrames;m++){
+      var pos=Math.round(m*Ha);
+      if(pos+N>xin.length)break;
+      for(i=0;i<N;i++){re[i]=xin[pos+i]*w[i];im[i]=0}
+      fft(re,im,false);
+      for(k=0;k<=h;k++){mag[k]=Math.sqrt(re[k]*re[k]+im[k]*im[k]);phi[k]=Math.atan2(im[k],re[k])}
+      // Formants: move each bin's level so that, after resampling by p, the envelope lands where it was.
+      envelope(mag,N,q,cre,cim,env);
+      for(k=0;k<=h;k++){
+        var src=k*p,e2=0;
+        if(src<h){var j0=Math.floor(src),f=src-j0;e2=env[j0]*(1-f)+env[j0+1]*f}
+        var r=e2/(env[k]+1e-12);out[k]=mag[k]*(r>8?8:r);
+      }
+      if(m===0){for(k=0;k<=h;k++)theta[k]=phi[k]}
+      else{
+        var dpos=pos-prevPos,np=0;
+        for(k=1;k<h;k++)if(mag[k]>mag[k-1]&&mag[k]>=mag[k+1])peaks[np++]=k;
+        if(!np)peaks[np++]=1;
+        // Each bin follows its nearest peak (identity phase locking).
+        for(var a=0,b=0;b<np;b++){
+          var end=b+1<np?((peaks[b]+peaks[b+1])>>1):h;
+          for(;a<=end;a++)owner[a]=peaks[b];
+        }
+        for(b=0;b<np;b++){
+          k=peaks[b];var om=2*Math.PI*k/N;
+          var inst=om+princarg(phi[k]-prevPhi[k]-om*dpos)/dpos;
+          env[k]=theta[k]+inst*Hs; // reuse env as the new peak phase
+        }
+        for(b=0;b<np;b++)theta[peaks[b]]=env[peaks[b]];
+        for(k=0;k<=h;k++){var pk=owner[k];if(pk!==k)theta[k]=theta[pk]+phi[k]-phi[pk]}
+      }
+      for(k=0;k<=h;k++){re[k]=out[k]*Math.cos(theta[k]);im[k]=out[k]*Math.sin(theta[k]);prevPhi[k]=phi[k]}
+      for(k=1;k<h;k++){re[N-k]=re[k];im[N-k]=-im[k]}
+      fft(re,im,true);
+      var o=m*Hs;
+      for(i=0;i<N;i++)y[o+i]+=re[i]*w[i]*norm;
+      prevPos=pos;
+    }
+    // Read the stretched signal back at p times the speed: same length, pitch moved by p.
+    // Blackman-windowed sinc, low-passed at the new Nyquist when raising the pitch; tabulated for speed.
+    var fc=Math.min(1,1/p),K=Math.ceil(16/fc),R=512,kern=new Float32Array(K*R+2),res=new Float32Array(L),peak=0;
+    for(i=0;i<kern.length;i++){
+      var d=i/R,u=d/K;
+      kern[i]=u>=1?0:(d===0?fc:Math.sin(Math.PI*fc*d)/(Math.PI*d))*(0.42+0.5*Math.cos(Math.PI*u)+0.08*Math.cos(2*Math.PI*u));
+    }
+    for(var n=0;n<L;n++){
+      var t=(n+N)*p,c=Math.floor(t),acc=0,lo=Math.max(0,c-K+1),hi=Math.min(y.length-1,c+K);
+      for(i=lo;i<=hi;i++){
+        var x2=Math.abs(t-i)*R,ix=x2|0;
+        acc+=y[i]*(kern[ix]+(kern[ix+1]-kern[ix])*(x2-ix));
+      }
+      res[n]=acc;if(Math.abs(acc)>peak)peak=Math.abs(acc);
+    }
+    if(peak>0.99)for(n=0;n<L;n++)res[n]*=0.99/peak;
+    return res;
+  }
+  function wav(x,fs){
+    var b=new ArrayBuffer(44+x.length*2),v=new DataView(b);
+    function w(o,s){for(var i=0;i<s.length;i++)v.setUint8(o+i,s.charCodeAt(i))}
+    w(0,'RIFF');v.setUint32(4,36+x.length*2,true);w(8,'WAVE');w(12,'fmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);
+    v.setUint32(24,fs,true);v.setUint32(28,fs*2,true);v.setUint16(32,2,true);v.setUint16(34,16,true);w(36,'data');v.setUint32(40,x.length*2,true);
+    for(var i=0;i<x.length;i++){var s=Math.max(-1,Math.min(1,x[i]));v.setInt16(44+i*2,s<0?s*32768:s*32767,true)}
+    return new Blob([b],{type:'audio/wav'});
+  }
+  return {shift:shift,wav:wav};
+})();
+
 (function(){
   // Public address of the Cloudflare Worker, not a secret. The ElevenLabs key stays in the Worker.
   var WORKER_URL='https://announcer-token.eyasualemu0.workers.dev';
-  var MAX_MS=15000;   // longest recording
   var MIN_MS=600;     // shorter than this is treated as an accidental tap
   var LS='announcer-voice-changer-v1';
+  var ADMIN=/[?&]admin=1(&|$)/.test(location.search);
+  if(ADMIN)document.body.classList.add('is-admin');
 
   var $=function(i){return document.getElementById(i)};
-  var settings={noise:false,worker:''};
+  var settings={noise:false,worker:'',rate:1,pitch:0,maxSec:4};
   try{var s=JSON.parse(localStorage.getItem(LS)||'{}');for(var k in s)if(k in settings)settings[k]=s[k]}catch(e){}
+  function clamp(v,lo,hi,def){v=Number(v);return isFinite(v)?Math.min(hi,Math.max(lo,v)):def}
+  settings.rate=clamp(settings.rate,0.6,1.3,1);settings.pitch=clamp(settings.pitch,-4,4,0);settings.maxSec=Math.round(clamp(settings.maxSec,3,8,4));
   function save(){try{localStorage.setItem(LS,JSON.stringify(settings))}catch(e){}}
   function workerUrl(){return (settings.worker||WORKER_URL||'').trim().replace(/\/+$/,'')}
   function setState(t){$('state').textContent=t}
@@ -97,32 +250,83 @@ input[type=url]{width:100%;font-size:16px;padding:12px;border-radius:16px;border
   // ---------- Audio playback ----------
   // One shared <audio> element, unlocked by the first tap, so iPhone allows playing it after the upload finishes.
   var player=new Audio();player.preload='auto';
-  var unlocked=false,silent=null;
-  function silentWav(){
-    var n=800,b=new ArrayBuffer(44+n*2),v=new DataView(b);
-    function w(o,s){for(var i=0;i<s.length;i++)v.setUint8(o+i,s.charCodeAt(i))}
-    w(0,'RIFF');v.setUint32(4,36+n*2,true);w(8,'WAVE');w(12,'fmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);
-    v.setUint32(24,8000,true);v.setUint32(28,16000,true);v.setUint16(32,2,true);v.setUint16(34,16,true);w(36,'data');v.setUint32(40,n*2,true);
-    return URL.createObjectURL(new Blob([b],{type:'audio/wav'}));
-  }
+  var unlocked=false,silent=null,playingResult=false,playSeq=0;
+  function silentWav(){return URL.createObjectURL(PitchShift.wav(new Float32Array(800),8000))}
   function unlockAudio(){
     if(unlocked)return;
     unlocked=true;
     try{silent=silent||silentWav();player.src=silent;var p=player.play();if(p&&p.catch)p.catch(function(){unlocked=false})}catch(e){unlocked=false}
   }
-  function stopAudio(){try{player.pause()}catch(e){}}
-  function play(url,doneText){
-    stopAudio();
+  function stopAudio(){playSeq++;try{player.pause()}catch(e){}}
+  function applyRate(rate){
+    // Speed only: keep the pitch while changing the tempo.
+    player.preservesPitch=player.mozPreservesPitch=player.webkitPreservesPitch=true;
+    player.defaultPlaybackRate=rate;player.playbackRate=rate;
+  }
+  function play(url,isResult){
     player.src=url;
-    player.onended=function(){setState(doneText||'מוכן')};
+    playingResult=!!isResult;
+    applyRate(isResult?settings.rate:1);
+    player.onended=function(){setState('מוכן')};
     setState('משמיע...');
     var p=player.play();
-    if(p&&p.catch)p.catch(function(e){setState(e&&e.name==='NotAllowedError'?'הדפדפן חסם את ההשמעה. לחצו "השמע שוב".':'לא ניתן להשמיע את הקול שהתקבל.')});
+    if(p&&p.catch)p.catch(function(e){setState(e&&e.name==='NotAllowedError'?'הדפדפן חסם את ההשמעה. לחצו "השמע שוב".':'לא ניתן להשמיע את הקול.')});
+  }
+
+  // ---------- Pitch ----------
+  var resultBlob=null,resultUrl=null,decoded=null,shifted={},actx=null;
+  function decodeResult(){
+    if(decoded)return decoded;
+    var AC=window.AudioContext||window.webkitAudioContext;
+    if(!AC)return Promise.reject(new Error('no-webaudio'));
+    actx=actx||new AC();
+    var blob=resultBlob;
+    decoded=blob.arrayBuffer().then(function(buf){
+      return new Promise(function(ok,fail){
+        var p=actx.decodeAudioData(buf,ok,fail);
+        if(p&&p.then)p.then(ok,fail);
+      });
+    }).then(function(ab){
+      var n=ab.length,mono=new Float32Array(n);
+      for(var c=0;c<ab.numberOfChannels;c++){var d=ab.getChannelData(c);for(var i=0;i<n;i++)mono[i]+=d[i]/ab.numberOfChannels}
+      return {x:mono,fs:ab.sampleRate};
+    });
+    decoded.catch(function(){decoded=null});
+    return decoded;
+  }
+  function pitchedUrl(semis){
+    if(!semis)return Promise.resolve(resultUrl);
+    if(shifted[semis])return shifted[semis];
+    var mine=resultBlob;
+    shifted[semis]=decodeResult().then(function(d){
+      // Let the screen update before the calculation, which takes a moment on a phone.
+      return new Promise(function(ok){setTimeout(ok,30)}).then(function(){
+        if(mine!==resultBlob)throw new Error('stale');
+        return URL.createObjectURL(PitchShift.wav(PitchShift.shift(d.x,d.fs,semis),d.fs));
+      });
+    });
+    shifted[semis].catch(function(){delete shifted[semis]});
+    return shifted[semis];
+  }
+  function playResult(){
+    if(!resultBlob)return;
+    stopAudio();
+    var my=playSeq,semis=settings.pitch;
+    if(semis)setState('מכוון גובה צליל...');
+    pitchedUrl(semis).then(function(url){if(my===playSeq)play(url,true)},function(){
+      if(my!==playSeq)return;
+      play(resultUrl,true);
+      if(ADMIN)setChip('warn','גובה הצליל לא חושב במכשיר הזה');
+    });
+  }
+  function setResult(blob){
+    for(var k in shifted)shifted[k].then(function(u){URL.revokeObjectURL(u)},function(){});
+    if(resultUrl)URL.revokeObjectURL(resultUrl);
+    resultBlob=blob;resultUrl=URL.createObjectURL(blob);decoded=null;shifted={};
   }
 
   // ---------- Recording ----------
-  var stream=null,rec=null,chunks=[],startedAt=0,maxTimer=null,tick=null,busy=false;
-  var resultUrl=null,origUrl=null;
+  var stream=null,rec=null,chunks=[],startedAt=0,maxTimer=null,tick=null,busy=false,origUrl=null;
   function pickType(){
     if(!window.MediaRecorder||!MediaRecorder.isTypeSupported)return '';
     var types=['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg;codecs=opus'];
@@ -134,13 +338,19 @@ input[type=url]{width:100%;font-size:16px;padding:12px;border-radius:16px;border
     if(stream){stream.getTracks().forEach(function(t){t.stop()});stream=null}
   }
   function setRecording(on){
+    var maxMs=settings.maxSec*1000;
     $('mic').classList.toggle('rec',on);
-    $('miclbl').textContent=on?'מקליט... (לחצו לסיום)':'לחצו כדי להקליט';
+    $('miclbl').textContent=on?'לחצו לסיום':'לחצו כדי להקליט';
     var b=$('bar');b.hidden=!on;b.firstChild.style.width='0';
     clearInterval(tick);clearTimeout(maxTimer);
     if(on){
-      tick=setInterval(function(){b.firstChild.style.width=Math.min(100,(Date.now()-startedAt)/MAX_MS*100)+'%'},100);
-      maxTimer=setTimeout(stopRecording,MAX_MS);
+      var update=function(){
+        var el=Date.now()-startedAt;
+        $('count').textContent=Math.max(1,Math.ceil((maxMs-el)/1000));
+        b.firstChild.style.width=Math.min(100,el/maxMs*100)+'%';
+      };
+      update();tick=setInterval(update,100);
+      maxTimer=setTimeout(stopRecording,maxMs);
     }
   }
   function setBusy(on){busy=on;$('mic').classList.toggle('busy',on);$('mic').disabled=on}
@@ -148,7 +358,6 @@ input[type=url]{width:100%;font-size:16px;padding:12px;border-radius:16px;border
     if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia||!window.MediaRecorder){
       setState('הדפדפן הזה לא תומך בהקלטה. נסו Chrome או Safari מעודכן.');return;
     }
-    if(!workerUrl()){setChip('bad','לא הוגדרה כתובת שירות');setState('יש להגדיר כתובת שירות בהגדרות.');return}
     stopAudio();setBusy(true);setState('מבקש גישה למיקרופון...');
     navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}}).then(function(s){
       stream=s;chunks=[];
@@ -187,25 +396,62 @@ input[type=url]{width:100%;font-size:16px;padding:12px;border-radius:16px;border
     if(e==='elevenlabs-error')return 'ElevenLabs החזיר שגיאה ('+(j.status||'')+(d?' '+d:'')+').';
     return 'שגיאה בשירות ('+status+').';
   }
-  function convert(blob){
-    setBusy(true);setState('מחליף קול...');setChip('','מעבד...');
-    var url=workerUrl()+'/voice-changer'+(settings.noise?'?noise=1':'');
-    fetch(url,{method:'POST',body:blob,headers:{'Content-Type':blob.type.split(';')[0]||'application/octet-stream'},cache:'no-store'}).then(function(r){
-      if(!r.ok)return r.json().catch(function(){return null}).then(function(j){throw new Error(errorText(j,r.status))});
+  function send(base,blob){
+    var url=base+'/voice-changer'+(settings.noise?'?noise=1':'');
+    return fetch(url,{method:'POST',body:blob,headers:{'Content-Type':blob.type.split(';')[0]||'application/octet-stream'},cache:'no-store'}).then(function(r){
+      if(!r.ok)return r.json().catch(function(){return null}).then(function(j){
+        var err=new Error(errorText(j,r.status));
+        // These come from a working service, so the address itself is fine.
+        err.serviceOk=!!j&&/^(elevenlabs-error|elevenlabs-unreachable|too-large|empty)$/.test(j.error||'');
+        throw err;
+      });
       return r.blob();
     }).then(function(out){
-      if(!out.size)throw new Error('התקבלה תשובה ריקה.');
-      if(resultUrl)URL.revokeObjectURL(resultUrl);
-      resultUrl=URL.createObjectURL(out);
+      if(!out.size){var err=new Error('התקבלה תשובה ריקה.');err.serviceOk=true;throw err}
+      return out;
+    },function(e){
+      if(e&&e.serviceOk!==undefined)throw e;
+      var err=new Error('אין חיבור לשירות. בדקו את האינטרנט.');err.serviceOk=false;throw err;
+    });
+  }
+  function convert(blob){
+    setBusy(true);setState('מחליף קול...');setChip('','מעבד...');
+    var base=workerUrl(),fallback=WORKER_URL.replace(/\/+$/,'');
+    send(base,blob).catch(function(e){
+      // An old address saved on this device: go back to the one in the code, and forget it if that works.
+      if(e.serviceOk||!settings.worker||base===fallback)throw e;
+      return send(fallback,blob).then(function(out){settings.worker='';save();$('worker').value=fallback;return out});
+    }).then(function(out){
+      setResult(out);
       $('again').disabled=false;
       setChip('ok','✓ הקול הוחלף');
-      play(resultUrl,'מוכן');
+      setBusy(false);
+      playResult();
     }).catch(function(e){
-      var msg=(e&&e.message&&!/fetch|network|load failed/i.test(e.message))?e.message:'אין חיבור לשירות. בדקו את האינטרנט.';
+      setBusy(false);
       setChip('bad','לא הצליח');
-      setState(msg+' אפשר להשמיע את ההקלטה המקורית.');
-    }).finally(function(){setBusy(false)});
+      setState((ADMIN?e.message+' ':'החלפת הקול לא הצליחה. ')+'אפשר להשמיע את ההקלטה המקורית.');
+    });
   }
+
+  // ---------- Settings ----------
+  // The number sits in its own left-to-right box so signs and digits read correctly inside Hebrew text.
+  function showVal(id,num,unit){var o=$(id),b=document.createElement('bdi');b.dir='ltr';b.textContent=num;o.textContent='';o.appendChild(b);if(unit)o.appendChild(document.createTextNode(' '+unit))}
+  function showRate(){showVal('rateval','×'+settings.rate.toFixed(2))}
+  function showPitch(){var v=settings.pitch;showVal('pitchval',(v>0?'+':v<0?'−':'')+Math.abs(v),Math.abs(v)===1?'חצי טון':'חצאי טונים')}
+  function showMax(){showVal('maxsecval',String(settings.maxSec),'שניות')}
+  $('rate').value=settings.rate;showRate();
+  $('rate').oninput=function(){settings.rate=clamp(this.value,0.6,1.3,1);showRate();save();if(playingResult)applyRate(settings.rate)};
+  $('pitch').value=settings.pitch;showPitch();
+  $('pitch').oninput=function(){settings.pitch=clamp(this.value,-4,4,0);showPitch();save()};
+  // Prepare the new pitch in the background so "play again" starts right away.
+  $('pitch').onchange=function(){if(resultBlob&&settings.pitch)pitchedUrl(settings.pitch).catch(function(){})};
+  $('maxsec').value=settings.maxSec;showMax();
+  $('maxsec').oninput=function(){settings.maxSec=Math.round(clamp(this.value,3,8,4));showMax();save()};
+  $('noise').checked=!!settings.noise;
+  $('noise').onchange=function(){settings.noise=this.checked;save()};
+  $('worker').value=workerUrl();
+  $('worker').onchange=function(){settings.worker=this.value.trim();save();setChip('','מוכן')};
 
   // ---------- Wiring ----------
   $('mic').onclick=function(){
@@ -214,13 +460,8 @@ input[type=url]{width:100%;font-size:16px;padding:12px;border-radius:16px;border
     if(rec&&rec.state==='recording'){stopRecording();return}
     startRecording();
   };
-  $('again').onclick=function(){unlockAudio();if(resultUrl)play(resultUrl,'מוכן')};
-  $('orig').onclick=function(){unlockAudio();if(origUrl)play(origUrl,'מוכן')};
-  $('noise').checked=!!settings.noise;
-  $('noise').onchange=function(){settings.noise=this.checked;save()};
-  $('worker').value=workerUrl();
-  $('worker').onchange=function(){settings.worker=this.value.trim();save();setChip('','מוכן')};
-  if(!workerUrl())setChip('warn','לא הוגדרה כתובת שירות');
+  $('again').onclick=function(){unlockAudio();playResult()};
+  $('orig').onclick=function(){unlockAudio();stopAudio();if(origUrl)play(origUrl,false)};
 })();
 </script>
 </body>
