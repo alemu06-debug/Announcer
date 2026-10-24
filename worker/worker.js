@@ -1,6 +1,8 @@
 // Cloudflare Worker for the announcer pages. No keys are in this file. Set them in the Cloudflare dashboard:
 //   Secret    AZURE_SPEECH_KEY     - the Azure Speech key (encrypted by Cloudflare)
 //   Secret    ELEVENLABS_API_KEY   - the ElevenLabs API key (encrypted by Cloudflare)
+//   Secret    ACCESS_CODE          - optional; when set, every request must carry this code in the
+//                                    X-Access-Code header. The pages keep it on the guard's device only.
 //   Variable  AZURE_SPEECH_REGION  - e.g. westeurope
 //   Variable  ALLOWED_ORIGINS      - optional, comma separated; default below
 //   Variable  ELEVENLABS_VOICE_ID  - optional; default below
@@ -11,13 +13,23 @@
 const DEFAULT_ORIGINS = 'https://alemu06-debug.github.io';
 const DEFAULT_VOICE_ID = 'V0stpogHp8KBgdErUZbd';
 const STS_MODEL = 'eleven_multilingual_sts_v2';
-const MAX_AUDIO_BYTES = 3 * 1024 * 1024; // a short sentence is far smaller than this
+const MAX_AUDIO_BYTES = 1024 * 1024; // an 8-second recording is about a tenth of this
 
 function reply(body, status, headers) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers },
   });
+}
+
+// Compares SHA-256 digests so the time taken does not reveal how much of the code was right.
+async function codeMatches(given, expected) {
+  const enc = new TextEncoder();
+  const [a, b] = await Promise.all([given, expected].map((s) => crypto.subtle.digest('SHA-256', enc.encode(s))));
+  const x = new Uint8Array(a), y = new Uint8Array(b);
+  let diff = 0;
+  for (let i = 0; i < x.length; i++) diff |= x[i] ^ y[i];
+  return diff === 0;
 }
 
 async function azureToken(env, cors) {
@@ -91,7 +103,7 @@ export default {
       ? {
           'Access-Control-Allow-Origin': origin,
           'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type',
+          'Access-Control-Allow-Headers': 'Content-Type, X-Access-Code',
           'Access-Control-Max-Age': '86400',
           Vary: 'Origin',
         }
@@ -99,6 +111,12 @@ export default {
 
     if (request.method === 'OPTIONS') return new Response(null, { status: ok ? 204 : 403, headers: cors });
     if (!ok) return reply({ error: 'origin-not-allowed' }, 403, cors);
+
+    // Until ACCESS_CODE is set the service stays open as before, so the pages keep working during the switch.
+    const expected = (env.ACCESS_CODE || '').trim();
+    if (expected && !(await codeMatches((request.headers.get('X-Access-Code') || '').trim(), expected))) {
+      return reply({ error: 'need-code' }, 401, cors);
+    }
 
     const path = new URL(request.url).pathname.replace(/\/+$/, '');
     if (path === '/voice-changer') {
