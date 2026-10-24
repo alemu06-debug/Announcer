@@ -8,6 +8,8 @@
 //   Variable  ALLOWED_ORIGINS      - optional, comma separated; default below
 //   Variable  ELEVENLABS_VOICE_ID  - optional; default below
 // Lockouts and the daily count live in one Durable Object (AnnouncerState), created automatically on deploy.
+// Wrong codes are counted per address group (an IPv6 address counts by its /64), so switching addresses
+// inside one network does not give extra guesses. Lock records nobody touched for a day are removed hourly.
 //
 // Routes (all need an allowed Origin; anything else gets 404 without touching the shared state):
 //   POST /session            {token}  -> is the guard's session still valid; today's usage only if it is
@@ -16,18 +18,25 @@
 //   POST /admin/login        {code}   -> administrator token valid for one hour
 //   POST /admin/status       header X-Admin-Session -> today's usage and active lockouts
 //   POST /admin/unlock       header X-Admin-Session -> lifts every guard lockout
-//   POST /admin/reset-quota  header X-Admin-Session -> sets today's count back to zero
+//   POST /admin/reset-quota  header X-Admin-Session -> sets today's count back to zero, at most twice a day
 import { DurableObject } from 'cloudflare:workers';
 
 const DEFAULT_ORIGINS = 'https://alemu06-debug.github.io';
 const DEFAULT_VOICE_ID = 'V0stpogHp8KBgdErUZbd';
 const STS_MODEL = 'eleven_multilingual_sts_v2';
-const MAX_AUDIO_BYTES = 1024 * 1024; // an 8-second recording is about a tenth of this
+// 8.5 seconds measured about 135 KB in Chrome (128 kbps); this leaves room for an iPhone recording
+// at twice that rate, and twice again on top, while keeping a long low-bitrate upload out.
+const MAX_AUDIO_BYTES = 600 * 1024;
 const DEFAULT_DAILY_LIMIT = 30;
+const MAX_RESETS = 2; // quota resets allowed per day
 const TIME_ZONE = 'Asia/Jerusalem';
-const HOUR = 60 * 60 * 1000;
-const GUARD_LOCK = { max: 5, ms: HOUR }; // 5 wrong codes from one address -> locked for an hour
-const ADMIN_LOCK = { max: 3, ms: 24 * HOUR }; // 3 wrong admin codes from one address -> locked for a day
+const MINUTE = 60 * 1000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+// Every 5 wrong guard codes from one address group lock it, for longer each time: a minute, 5 minutes, then an hour.
+const GUARD_LOCK = { max: 5, steps: [MINUTE, 5 * MINUTE, HOUR] };
+const ADMIN_LOCK = { max: 3, steps: [DAY] }; // 3 wrong admin codes from one address group -> locked for a day
+const LOCK_MEMORY_MS = DAY; // a group with no wrong code for this long starts over
 const ADMIN_SESSION_MS = HOUR;
 
 const enc = new TextEncoder();
@@ -85,6 +94,12 @@ function sameBytes(a, b) {
   for (let i = 0; i < a.length; i++) d |= a[i] ^ b[i];
   return d === 0;
 }
+// Compares fixed-length digests, so the time taken does not reveal how long the real code is.
+async function sameCode(given, expected) {
+  if (!expected) return false;
+  const [a, b] = await Promise.all([given, expected].map((s) => crypto.subtle.digest('SHA-256', enc.encode(s))));
+  return sameBytes(new Uint8Array(a), new Uint8Array(b));
+}
 // The signing key mixes a random secret kept in the Durable Object with the current code,
 // so changing a code in Cloudflare ends every session made with the old one.
 // The random secret never changes once created, so each Worker instance fetches it at most once.
@@ -112,10 +127,41 @@ async function readToken(store, kind, code, token) {
   }
 }
 
+// ---------- Address groups ----------
+// An IPv4 address stands for itself. An IPv6 address counts by its first four groups (its /64),
+// because one home or one cloud server is handed a whole /64 and can switch addresses inside it at will.
+function addrGroup(ip) {
+  ip = String(ip || '').trim().toLowerCase().split('%')[0];
+  if (!ip.includes(':')) return ip || 'unknown';
+  const mapped = ip.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (mapped) return mapped[1];
+  const [head, tail] = ip.split('::');
+  const h = head ? head.split(':') : [];
+  const t = tail ? tail.split(':') : [];
+  const groups = tail === undefined ? h : [...h, ...Array(Math.max(0, 8 - h.length - t.length)).fill('0'), ...t];
+  return `${groups.slice(0, 4).map((g) => (parseInt(g, 16) || 0).toString(16)).join(':')}::/64`;
+}
+
 // ---------- Shared state ----------
 // A single instance holds all state. Each method runs to completion before the next request is let in,
 // so parallel guesses cannot slip past a lockout and parallel requests cannot exceed the daily limit.
+// Lock records sit in a SQL table so they can be counted and cleared without loading them all.
 export class AnnouncerState extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
+    this.sql = ctx.storage.sql;
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS locks (
+      scope TEXT NOT NULL, grp TEXT NOT NULL, fails INTEGER NOT NULL, level INTEGER NOT NULL,
+      until INTEGER NOT NULL, touched INTEGER NOT NULL, PRIMARY KEY (scope, grp))`);
+    // Lock records of the previous version were kept per address under lock:...; drop them once.
+    ctx.blockConcurrencyWhile(async () => {
+      if (await ctx.storage.get('locksV2')) return;
+      const keys = [...(await ctx.storage.list({ prefix: 'lock:' })).keys()];
+      for (let i = 0; i < keys.length; i += 128) await ctx.storage.delete(keys.slice(i, i + 128));
+      await ctx.storage.put('locksV2', true);
+    });
+  }
+
   async rootKey() {
     let k = await this.ctx.storage.get('rootKey');
     if (!k) {
@@ -125,23 +171,35 @@ export class AnnouncerState extends DurableObject {
     return k;
   }
 
-  // Checks a code and keeps count of wrong ones per address, all in one step.
-  async attempt(scope, ip, given, expected, max, lockMs) {
-    const key = `lock:${scope}:${ip}`;
+  // Records the result of a code check for one address group. The code itself is compared by the caller;
+  // everything up to the write below is synchronous, so no other request can run in between.
+  async attempt(scope, grp, correct, max, steps) {
     const now = Date.now();
-    let rec = await this.ctx.storage.get(key);
-    if (rec && rec.until > now) return { ok: false, locked: true, until: rec.until };
-    // A finished lockout, or mistakes older than the lock period, start a fresh count.
-    if (!rec || rec.until || now - rec.since > lockMs) rec = { fails: 0, since: now, until: 0 };
-    const a = enc.encode(given), b = enc.encode(expected);
-    if (expected && sameBytes(a, b)) {
-      await this.ctx.storage.delete(key);
+    const row = this.sql.exec('SELECT fails, level, until, touched FROM locks WHERE scope = ? AND grp = ?', scope, grp).toArray()[0];
+    if (row && row.until > now) return { ok: false, locked: true, until: row.until };
+    if (correct) {
+      if (row) this.sql.exec('DELETE FROM locks WHERE scope = ? AND grp = ?', scope, grp);
       return { ok: true };
     }
-    rec.fails++;
-    if (rec.fails >= max) rec.until = now + lockMs;
-    await this.ctx.storage.put(key, rec);
-    return { ok: false, locked: !!rec.until, until: rec.until, left: Math.max(0, max - rec.fails) };
+    // After a lockout the count starts again, one step longer; a day without mistakes forgets everything.
+    const fresh = !row || now - row.touched > LOCK_MEMORY_MS;
+    const fails = fresh || row.until ? 1 : row.fails + 1;
+    let level = fresh ? 0 : row.level;
+    let until = 0;
+    if (fails >= max) until = now + steps[Math.min(level++, steps.length - 1)];
+    this.sql.exec(
+      'INSERT OR REPLACE INTO locks (scope, grp, fails, level, until, touched) VALUES (?, ?, ?, ?, ?, ?)',
+      scope, grp, fails, level, until, now,
+    );
+    if ((await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(now + HOUR);
+    return { ok: false, locked: !!until, until, left: Math.max(0, max - fails) };
+  }
+
+  // Hourly cleanup while lock records exist.
+  async alarm() {
+    const now = Date.now();
+    this.sql.exec('DELETE FROM locks WHERE touched < ? AND until < ?', now - LOCK_MEMORY_MS, now);
+    if (this.sql.exec('SELECT COUNT(*) AS n FROM locks').one().n) await this.ctx.storage.setAlarm(now + HOUR);
   }
 
   async usage(day) {
@@ -159,20 +217,24 @@ export class AnnouncerState extends DurableObject {
     const n = await this.usage(day);
     if (n > 0) await this.ctx.storage.put('count', { day, n: n - 1 });
   }
-  async resetQuota() {
+  async resets(day) {
+    const r = await this.ctx.storage.get('resets');
+    return r && r.day === day ? r.n : 0;
+  }
+  async resetQuota(day, max) {
+    const n = await this.resets(day);
+    if (n >= max) return { ok: false, resets: n };
+    await this.ctx.storage.put('resets', { day, n: n + 1 });
     await this.ctx.storage.delete('count');
+    return { ok: true, resets: n + 1 };
   }
 
-  async guardLocks() {
-    const now = Date.now();
-    let active = 0;
-    for (const rec of (await this.ctx.storage.list({ prefix: 'lock:guard:' })).values()) if (rec.until > now) active++;
-    return active;
+  guardLocks() {
+    return this.sql.exec("SELECT COUNT(*) AS n FROM locks WHERE scope = 'guard' AND until > ?", Date.now()).one().n;
   }
-  async unlockGuards() {
-    const keys = [...(await this.ctx.storage.list({ prefix: 'lock:guard:' })).keys()];
-    const active = await this.guardLocks();
-    for (let i = 0; i < keys.length; i += 128) await this.ctx.storage.delete(keys.slice(i, i + 128));
+  unlockGuards() {
+    const active = this.guardLocks();
+    this.sql.exec("DELETE FROM locks WHERE scope = 'guard'");
     return active;
   }
 }
@@ -217,6 +279,30 @@ function dailyLimit(env) {
   const n = parseInt(env.DAILY_LIMIT, 10);
   return Number.isFinite(n) && n >= 0 ? n : DEFAULT_DAILY_LIMIT;
 }
+// Reads a body but stops as soon as it passes max bytes, so an oversized upload is never held in memory.
+async function readCapped(body, max) {
+  if (!body) return new Uint8Array(0);
+  const reader = body.getReader();
+  const parts = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    parts.push(value);
+  }
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const p of parts) {
+    out.set(p, at);
+    at += p.byteLength;
+  }
+  return out;
+}
 async function readJson(request) {
   try {
     return JSON.parse((await request.text()).slice(0, 2000)) || {};
@@ -227,7 +313,7 @@ async function readJson(request) {
 
 async function handle(request, env, cors) {
   const path = new URL(request.url).pathname.replace(/\/+$/, '') || '/';
-  const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+  const grp = addrGroup(request.headers.get('CF-Connecting-IP'));
   // Getting the handle does not contact the shared state; only calls on it do.
   const store = env.STATE.get(env.STATE.idFromName('main'));
   const now = Date.now();
@@ -251,7 +337,7 @@ async function handle(request, env, cors) {
     const code = String((await readJson(request)).code || '').trim();
     // Anything that is not 6 digits can never be right; refuse it without touching the shared state.
     if (!/^\d{6}$/.test(code)) return reply({ error: 'bad-format' }, 400, cors);
-    const r = await store.attempt('guard', ip, code, guardCode, GUARD_LOCK.max, GUARD_LOCK.ms);
+    const r = await store.attempt('guard', grp, await sameCode(code, guardCode), GUARD_LOCK.max, GUARD_LOCK.steps);
     if (r.locked) return reply({ error: 'locked', until: r.until }, 429, cors);
     if (!r.ok) return reply({ error: 'wrong-code', left: r.left }, 401, cors);
     const exp = nextIsraelMidnight(now);
@@ -261,10 +347,11 @@ async function handle(request, env, cors) {
   if (path === '/voice-changer') {
     if (!post) return reply({ error: 'method-not-allowed' }, 405, cors);
     if (!(await guardSession())) return reply({ error: 'need-login' }, 401, cors);
+    // The declared size is checked before reading; a body without one is read only up to the limit.
     if (Number(request.headers.get('Content-Length') || 0) > MAX_AUDIO_BYTES) return reply({ error: 'too-large' }, 413, cors);
-    const audio = await request.arrayBuffer();
+    const audio = await readCapped(request.body, MAX_AUDIO_BYTES);
+    if (!audio) return reply({ error: 'too-large' }, 413, cors);
     if (!audio.byteLength) return reply({ error: 'empty' }, 400, cors);
-    if (audio.byteLength > MAX_AUDIO_BYTES) return reply({ error: 'too-large' }, 413, cors);
     const type = (request.headers.get('Content-Type') || 'application/octet-stream').split(';')[0].trim();
 
     const slot = await store.reserve(day, limit);
@@ -280,7 +367,7 @@ async function handle(request, env, cors) {
       if (!adminCode) return reply({ error: 'bad-config' }, 500, cors);
       const code = String((await readJson(request)).code || '').trim().slice(0, 200);
       if (!code) return reply({ error: 'bad-format' }, 400, cors);
-      const r = await store.attempt('admin', ip, code, adminCode, ADMIN_LOCK.max, ADMIN_LOCK.ms);
+      const r = await store.attempt('admin', grp, await sameCode(code, adminCode), ADMIN_LOCK.max, ADMIN_LOCK.steps);
       if (r.locked) return reply({ error: 'locked', until: r.until }, 429, cors);
       if (!r.ok) return reply({ error: 'wrong-code', left: r.left }, 401, cors);
       return reply({ token: await makeToken(store, 'a', adminCode, now + ADMIN_SESSION_MS) }, 200, cors);
@@ -288,9 +375,12 @@ async function handle(request, env, cors) {
     if (!(await adminSession())) return reply({ error: 'need-admin' }, 401, cors);
     let unlocked = 0;
     if (path === '/admin/unlock') unlocked = await store.unlockGuards();
-    else if (path === '/admin/reset-quota') await store.resetQuota();
-    else if (path !== '/admin/status') return reply({ error: 'not-found' }, 404, cors);
-    return reply({ ok: true, unlocked, used: await store.usage(day), limit, locks: await store.guardLocks() }, 200, cors);
+    else if (path === '/admin/reset-quota') {
+      const r = await store.resetQuota(day, MAX_RESETS);
+      if (!r.ok) return reply({ error: 'reset-limit', resets: r.resets, maxResets: MAX_RESETS }, 429, cors);
+    } else if (path !== '/admin/status') return reply({ error: 'not-found' }, 404, cors);
+    const [used, locks, resets] = await Promise.all([store.usage(day), store.guardLocks(), store.resets(day)]);
+    return reply({ ok: true, unlocked, used, limit, locks, resets, maxResets: MAX_RESETS }, 200, cors);
   }
 
   return reply({ error: 'not-found' }, 404, cors);

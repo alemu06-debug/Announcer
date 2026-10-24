@@ -47,7 +47,7 @@ details summary{cursor:pointer;color:var(--muted);font-size:16px}
 .ends{display:flex;justify-content:space-between;direction:ltr;color:var(--muted);font-size:13px}
 .chk{display:flex;gap:10px;align-items:center;margin-bottom:14px;font-size:16px}
 .chk input{width:22px;height:22px;flex:none}
-input[type=url],#code,#admincode{width:100%;font-size:16px;padding:12px;border-radius:16px;border:1px solid var(--line);background:var(--bg);color:var(--text);font-family:inherit;direction:ltr;text-align:left}
+#admincode{width:100%;font-size:16px;padding:12px;border-radius:16px;border:1px solid var(--line);background:var(--bg);color:var(--text);font-family:inherit;direction:ltr;text-align:left}
 .note{color:var(--muted);font-size:13px;line-height:1.5;margin:6px 0 14px}
 .admin{display:none}
 body.is-admin .admin{display:block}
@@ -92,13 +92,6 @@ body.is-admin .admin{display:block}
   <div id="state">לחצו ואמרו משפט קצר עם השם</div>
 </div>
 
-<div class="card" id="codecard" hidden>
-  <label class="lbl" for="code">קוד גישה</label>
-  <div class="note" id="codemsg">יש להזין את קוד הגישה פעם אחת. הוא יישמר בטלפון הזה.</div>
-  <input id="code" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" dir="ltr">
-  <div class="row"><button class="p" id="codesave" type="button">שמירה</button></div>
-</div>
-
 <div class="card">
   <div class="row" style="margin-top:0">
     <button class="p" id="again" type="button" disabled>🔁 השמע שוב</button>
@@ -129,8 +122,6 @@ body.is-admin .admin{display:block}
       <div class="note">מהירות וגובה צליל חלים גם על "השמע שוב", כך שאפשר לכוון בלי להקליט מחדש.</div>
       <div class="row"><button id="reset" type="button">חזרה לברירת המחדל</button></div>
       <div class="admin">
-        <label class="lbl" for="worker">כתובת השירות (Cloudflare Worker)</label>
-        <input id="worker" type="url" placeholder="https://....workers.dev" autocomplete="off" spellcheck="false">
         <div class="note">ההקלטה נשלחת דרך השירות ל-ElevenLabs כדי להחליף את הקול, ולא נשמרת בדף. גובה הצליל מחושב במכשיר. מהירות וגובה צליל לא חלים על ההקלטה המקורית.</div>
       </div>
     </div>
@@ -146,6 +137,7 @@ body.is-admin .admin{display:block}
   <div id="adminarea" hidden>
     <div class="stat"><span>המרות היום</span><b id="usedval"></b></div>
     <div class="stat"><span>נעילות פעילות</span><b id="locksval"></b></div>
+    <div class="stat"><span>איפוסי מכסה היום</span><b id="resetsval"></b></div>
     <div class="row"><button id="unlockall" type="button">שחרור כל הנעילות</button></div>
     <div class="row"><button id="resetquota" type="button">איפוס המכסה היומית</button></div>
     <div class="row"><button id="adminrefresh" type="button">רענון</button></div>
@@ -291,12 +283,14 @@ var PitchShift=(function(){
   var $=function(i){return document.getElementById(i)};
   // Used when nothing is saved on the device yet, and by "back to defaults".
   var DEFAULTS={rate:1,pitch:2.5,maxSec:3,noise:true};
-  var settings={noise:DEFAULTS.noise,worker:'',rate:DEFAULTS.rate,pitch:DEFAULTS.pitch,maxSec:DEFAULTS.maxSec,code:''};
-  try{var s=JSON.parse(localStorage.getItem(LS)||'{}');for(var k in s)if(k in settings)settings[k]=s[k]}catch(e){}
+  var settings={noise:DEFAULTS.noise,rate:DEFAULTS.rate,pitch:DEFAULTS.pitch,maxSec:DEFAULTS.maxSec};
+  // Earlier versions also saved an access code and a service address here; anything not listed above is dropped.
+  var dropped=false;
+  try{var s=JSON.parse(localStorage.getItem(LS)||'{}');for(var k in s){if(k in settings)settings[k]=s[k];else dropped=true}}catch(e){}
   function clamp(v,lo,hi,def){v=Number(v);return isFinite(v)?Math.min(hi,Math.max(lo,v)):def}
   settings.rate=clamp(settings.rate,0.6,1.3,DEFAULTS.rate);settings.pitch=clamp(settings.pitch,-4,4,DEFAULTS.pitch);settings.maxSec=Math.round(clamp(settings.maxSec,3,8,DEFAULTS.maxSec));
   function save(){try{localStorage.setItem(LS,JSON.stringify(settings))}catch(e){}}
-  function workerUrl(){return (settings.worker||WORKER_URL||'').trim().replace(/\/+$/,'')}
+  if(dropped)save();
   function setState(t){$('state').textContent=t}
   function setChip(cls,t){$('chip').className='chip '+cls;$('chip').textContent=t}
 
@@ -439,37 +433,25 @@ var PitchShift=(function(){
   }
 
   // ---------- Service ----------
-  // mode is 'v2' once the service answers with daily sessions, or 'legacy' while it still runs the
-  // previous version; the page keeps working with both during the switch.
-  var mode='',session=null,pending=null,detecting=null;
+  // ready turns true once the service has answered; until then the login screen is not shown.
+  var ready=false,session=null,pending=null,detecting=null;
   try{session=JSON.parse(localStorage.getItem(LS_SESSION)||'null')}catch(e){}
   function sessionValid(){return !!(session&&session.token&&session.exp>Date.now())}
   function saveSession(s){session=s;try{if(s)localStorage.setItem(LS_SESSION,JSON.stringify(s));else localStorage.removeItem(LS_SESSION)}catch(e){}}
-  function fallbackUrl(){return WORKER_URL.replace(/\/+$/,'')}
-  // JSON sent as text/plain, so the older service can still answer it without a preflight.
-  function postJson(base,path,body,headers){
+  // JSON sent as text/plain, so it needs no preflight.
+  function postJson(path,body,headers){
     var h={'Content-Type':'text/plain'};for(var k in headers||{})h[k]=headers[k];
-    return fetch(base+path,{method:'POST',body:JSON.stringify(body||{}),headers:h,cache:'no-store'}).then(function(r){
+    return fetch(WORKER_URL+path,{method:'POST',body:JSON.stringify(body||{}),headers:h,cache:'no-store'}).then(function(r){
       return r.json().catch(function(){return {}}).then(function(j){j=j||{};j.httpStatus=r.status;return j});
     });
   }
-  function useFallback(){settings.worker='';save();$('worker').value=fallbackUrl()}
   function detect(){
     if(detecting)return detecting;
-    var base=workerUrl(),fb=fallbackUrl();
-    function ask(b){return postJson(b,'/session',{token:session?session.token:''})}
-    // An old address saved on this device: go back to the one in the code, and forget it if that works.
-    function viaFallback(j){
-      if(!settings.worker||base===fb){if(j)return j;throw new Error('offline')}
-      return ask(fb).then(function(j2){if(j2.v===2||!j){useFallback();return j2}return j},function(e){if(j)return j;throw e});
-    }
-    detecting=ask(base).then(function(j){return j.v===2?j:viaFallback(j)},function(e){return viaFallback(null)}).then(function(j){
-      mode=j.v===2?'v2':'legacy';
-      if(mode==='v2'){
-        if(!j.ok)saveSession(null);
-        if(!sessionValid()&&!ADMIN)showLogin('הזינו את הקוד בן 6 הספרות');
-      }
-      return mode;
+    detecting=postJson('/session',{token:session?session.token:''}).then(function(j){
+      if(j.v!==2)throw new Error('offline');
+      ready=true;
+      if(!j.ok)saveSession(null);
+      if(!sessionValid()&&!ADMIN)showLogin('הזינו את הקוד בן 6 הספרות');
     });
     detecting.then(function(){detecting=null},function(){detecting=null});
     return detecting;
@@ -493,7 +475,7 @@ var PitchShift=(function(){
     var code=$('pin').value.replace(/\D/g,'');
     if(code.length!==6){loginMsg('יש להזין 6 ספרות.',true);return}
     $('loginbtn').disabled=true;loginMsg('בודק...');
-    postJson(workerUrl(),'/login',{code:code}).then(function(j){
+    postJson('/login',{code:code}).then(function(j){
       $('pin').value='';
       if(j.token){
         saveSession({token:j.token,exp:j.exp});hideLogin();
@@ -516,14 +498,13 @@ var PitchShift=(function(){
   $('logincancel').onclick=function(){hideLogin()};
   // The session ends at midnight; ask again as soon as it does, and recheck with the service on return.
   setInterval(function(){
-    if(mode==='v2'&&!sessionValid()&&$('login').hidden&&!ADMIN&&!busy)showLogin('הקוד היומי פג. הזינו את הקוד שוב.');
+    if(ready&&!sessionValid()&&$('login').hidden&&!ADMIN&&!busy)showLogin('הקוד היומי פג. הזינו את הקוד שוב.');
   },30000);
   document.addEventListener('visibilitychange',function(){if(!document.hidden)detect().catch(function(){})});
 
   // ---------- Voice changer ----------
   function errorText(j,status){
     var d=(j&&j.detail)||'',e=(j&&j.error)||'';
-    if(e==='need-code')return 'נדרש קוד גישה.';
     if(e==='origin-not-allowed')return 'השירות לא מאשר את הכתובת של הדף הזה.';
     if(e==='not-configured')return 'השירות לא מוגדר: חסר מפתח ElevenLabs ב-Cloudflare.';
     if(e==='too-large')return 'ההקלטה ארוכה מדי.';
@@ -532,42 +513,32 @@ var PitchShift=(function(){
     if(e==='elevenlabs-error')return 'ElevenLabs החזיר שגיאה ('+(j.status||'')+(d?' '+d:'')+').';
     return 'שגיאה בשירות ('+status+').';
   }
-  function send(base,blob,noCode){
-    var url=base+'/voice-changer'+(settings.noise?'?noise=1':'');
+  function send(blob){
+    var url=WORKER_URL+'/voice-changer'+(settings.noise?'?noise=1':'');
     var headers={'Content-Type':blob.type.split(';')[0]||'application/octet-stream'};
-    var withCode=mode==='legacy'&&!!settings.code&&!noCode;
-    if(mode==='v2'&&session)headers['X-Session']=session.token;
-    if(withCode)headers['X-Access-Code']=settings.code;
+    if(session)headers['X-Session']=session.token;
     return fetch(url,{method:'POST',body:blob,headers:headers,cache:'no-store'}).then(function(r){
       if(!r.ok)return r.json().catch(function(){return null}).then(function(j){
         var err=new Error(errorText(j,r.status));
-        // These come from a working service, so the address itself is fine.
-        err.serviceOk=!!j&&/^(elevenlabs-error|elevenlabs-unreachable|too-large|empty|need-code|need-login|daily-limit)$/.test(j.error||'');
-        err.needCode=!!j&&j.error==='need-code';
+        err.fromService=true;
         err.needLogin=!!j&&j.error==='need-login';
         err.dailyLimit=!!j&&j.error==='daily-limit';
         throw err;
       });
       return r.blob();
     }).then(function(out){
-      if(!out.size){var err=new Error('התקבלה תשובה ריקה.');err.serviceOk=true;throw err}
+      if(!out.size){var err=new Error('התקבלה תשובה ריקה.');err.fromService=true;throw err}
       return out;
     },function(e){
-      if(e&&e.serviceOk!==undefined)throw e;
-      // The older service refuses the extra header; try once without it.
-      if(withCode)return send(base,blob,true);
-      var err=new Error('אין חיבור לשירות. בדקו את האינטרנט.');err.serviceOk=false;throw err;
+      if(e&&e.fromService)throw e;
+      throw new Error('אין חיבור לשירות. בדקו את האינטרנט.');
     });
   }
   function convert(blob){
     setBusy(true);setState('מחליף קול...');setChip('','מעבד...');
-    var base=workerUrl(),fb=fallbackUrl();
-    (mode?Promise.resolve(mode):detect()).then(function(){
-      if(mode==='v2'&&!sessionValid()){var e=new Error('need-login');e.needLogin=true;throw e}
-      return send(base,blob).catch(function(e){
-        if(e.serviceOk||!settings.worker||base===fb)throw e;
-        return send(fb,blob).then(function(out){useFallback();return out});
-      });
+    (ready?Promise.resolve():detect()).then(function(){
+      if(!sessionValid()){var e=new Error('need-login');e.needLogin=true;throw e}
+      return send(blob);
     }).then(function(out){
       setResult(out);
       $('again').disabled=false;
@@ -589,28 +560,9 @@ var PitchShift=(function(){
         return;
       }
       setChip('bad','לא הצליח');
-      if(e.needCode){
-        pending=blob;
-        askCode(settings.code?'הקוד שנשמר בטלפון הזה לא נכון. יש להזין את קוד הגישה.':'יש להזין את קוד הגישה פעם אחת. הוא יישמר בטלפון הזה.');
-        setState('נדרש קוד גישה. אחרי השמירה ההכרזה תישלח שוב.');
-        return;
-      }
       setState((ADMIN?e.message+' ':'החלפת הקול לא הצליחה. ')+'אפשר להשמיע את ההקלטה המקורית.');
     });
   }
-
-  // ---------- Access code of the previous service version (used only until it is updated) ----------
-  function askCode(msg){
-    $('codemsg').textContent=msg;$('code').value=settings.code;$('codecard').hidden=false;
-    $('codecard').scrollIntoView({behavior:'smooth',block:'center'});
-  }
-  $('codesave').onclick=function(){
-    unlockAudio();
-    settings.code=$('code').value.trim();save();
-    $('codecard').hidden=true;
-    if(pending&&settings.code){var b=pending;pending=null;convert(b)}
-    else setState(settings.code?'הקוד נשמר.':'הקוד נמחק מהטלפון הזה.');
-  };
 
   // ---------- Administration (?admin=1) ----------
   var adminToken='';
@@ -619,12 +571,14 @@ var PitchShift=(function(){
     $('adminlogin').hidden=true;$('adminarea').hidden=false;
     $('usedval').textContent=j.used+' מתוך '+j.limit;
     $('locksval').textContent=String(j.locks);
+    $('resetsval').textContent=j.resets+' מתוך '+j.maxResets;
   }
   function adminLoggedOut(msg){adminToken='';$('adminarea').hidden=true;$('adminlogin').hidden=false;adminMsg(msg)}
   function adminCall(path,doneMsg){
     adminMsg('...');
-    return postJson(workerUrl(),path,{},{'X-Admin-Session':adminToken}).then(function(j){
+    return postJson(path,{},{'X-Admin-Session':adminToken}).then(function(j){
       if(j.error==='need-admin'){adminLoggedOut('הכניסה פגה. הזינו שוב את קוד האדמין.');return}
+      if(j.error==='reset-limit'){$('resetsval').textContent=j.resets+' מתוך '+j.maxResets;adminMsg('הגעתם למספר האיפוסים המרבי היום.');return}
       if(!j.ok){adminMsg('שגיאה בשירות. נסו שוב.');return}
       showAdminArea(j);adminMsg(typeof doneMsg==='function'?doneMsg(j):(doneMsg||''));
     },function(){adminMsg('אין חיבור לשירות.')});
@@ -633,11 +587,10 @@ var PitchShift=(function(){
     var code=$('admincode').value.trim();
     if(!code){adminMsg('הזינו את קוד האדמין.');return}
     $('adminbtn').disabled=true;adminMsg('בודק...');
-    postJson(workerUrl(),'/admin/login',{code:code}).then(function(j){
+    postJson('/admin/login',{code:code}).then(function(j){
       $('admincode').value='';
       if(j.token){adminToken=j.token;return adminCall('/admin/status','')}
-      if(j.v!==2)adminMsg('השירות עדיין בגרסה הקודמת. יש לחבר את הפריסה האוטומטית בקלאודפלייר.');
-      else if(j.error==='locked')adminMsg('מסך הניהול נעול בגלל ניסיונות שגויים, עד '+timeText(j.until,true)+'.');
+      if(j.error==='locked')adminMsg('מסך הניהול נעול בגלל ניסיונות שגויים, עד '+timeText(j.until,true)+'.');
       else if(j.error==='wrong-code')adminMsg(j.left===1?'קוד שגוי. נשאר ניסיון אחד.':'קוד שגוי. נשארו '+j.left+' ניסיונות.');
       else if(j.error==='bad-config')adminMsg('קוד האדמין לא מוגדר בשירות.');
       else adminMsg('שגיאה בשירות. נסו שוב.');
@@ -667,14 +620,12 @@ var PitchShift=(function(){
   $('pitch').onchange=preparePitch;
   $('maxsec').oninput=function(){settings.maxSec=Math.round(clamp(this.value,3,8,DEFAULTS.maxSec));showMax();save()};
   $('noise').onchange=function(){settings.noise=this.checked;save()};
-  // Resets the four settings above; the service address is left as it is.
+  // Resets the four settings above.
   $('reset').onclick=function(){
     for(var k in DEFAULTS)settings[k]=DEFAULTS[k];
     save();showSettings();preparePitch();
     if(playingResult)applyRate(settings.rate);
   };
-  $('worker').value=workerUrl();
-  $('worker').onchange=function(){settings.worker=this.value.trim();save();setChip('','מוכן')};
 
   // ---------- Wiring ----------
   $('mic').onclick=function(){
