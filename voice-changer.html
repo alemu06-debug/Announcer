@@ -47,13 +47,38 @@ details summary{cursor:pointer;color:var(--muted);font-size:16px}
 .ends{display:flex;justify-content:space-between;direction:ltr;color:var(--muted);font-size:13px}
 .chk{display:flex;gap:10px;align-items:center;margin-bottom:14px;font-size:16px}
 .chk input{width:22px;height:22px;flex:none}
-input[type=url],#code{width:100%;font-size:16px;padding:12px;border-radius:16px;border:1px solid var(--line);background:var(--bg);color:var(--text);font-family:inherit;direction:ltr;text-align:left}
+input[type=url],#code,#admincode{width:100%;font-size:16px;padding:12px;border-radius:16px;border:1px solid var(--line);background:var(--bg);color:var(--text);font-family:inherit;direction:ltr;text-align:left}
 .note{color:var(--muted);font-size:13px;line-height:1.5;margin:6px 0 14px}
 .admin{display:none}
 body.is-admin .admin{display:block}
+.login{position:fixed;inset:0;z-index:10;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:calc(16px + env(safe-area-inset-top,0px)) 16px calc(16px + env(safe-area-inset-bottom,0px))}
+.login[hidden]{display:none}
+.loginbox{width:100%;max-width:420px;text-align:center}
+.loginbox .lock{font-size:48px}
+.loginbox h2{font-size:28px;margin:6px 0 4px}
+#loginmsg{min-height:52px;color:var(--muted);font-size:18px;line-height:1.4;margin:4px 0 14px}
+#loginmsg.bad{color:var(--bad);font-weight:600}
+#pin{width:100%;font-size:44px;letter-spacing:.35em;text-align:center;padding:14px 0 14px .35em;border-radius:18px;border:2px solid var(--line);background:var(--card);color:var(--text);font-family:inherit;direction:ltr;font-variant-numeric:tabular-nums;-webkit-text-security:disc}
+#pin:focus{outline:none;border-color:var(--accent)}
+.bigbtn{width:100%;min-height:64px;margin-top:14px;font-size:22px;font-weight:700;border:0;border-radius:16px;background:linear-gradient(145deg,var(--accent),var(--accent2));color:var(--accent-t);cursor:pointer;font-family:inherit;touch-action:manipulation}
+.bigbtn:disabled{opacity:.6}
+.linkbtn{margin:14px auto 0;background:none;border:0;color:var(--muted);font-size:16px;text-decoration:underline;cursor:pointer;font-family:inherit}
+.stat{display:flex;justify-content:space-between;font-size:17px;margin:4px 0}
+.card h3{margin:0 0 12px;font-size:18px}
 </style>
 </head>
 <body>
+<div class="login" id="login" hidden>
+  <form class="loginbox" id="loginform" autocomplete="off">
+    <div class="lock">🔒</div>
+    <h2>קוד כניסה יומי</h2>
+    <div id="loginmsg">הזינו את הקוד בן 6 הספרות</div>
+    <input id="pin" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code" aria-label="קוד כניסה">
+    <button class="bigbtn" id="loginbtn" type="submit">כניסה</button>
+    <button class="linkbtn admin" id="logincancel" type="button">סגירה (מצב ניהול)</button>
+  </form>
+</div>
+
 <main>
 <header><h1>🎙️ כריזה בהחלפת קול</h1><div id="chip" class="chip">מוכן</div></header>
 
@@ -106,11 +131,27 @@ body.is-admin .admin{display:block}
       <div class="admin">
         <label class="lbl" for="worker">כתובת השירות (Cloudflare Worker)</label>
         <input id="worker" type="url" placeholder="https://....workers.dev" autocomplete="off" spellcheck="false">
-        <div class="note">קישור הגדרה לטלפון של השומר: כתובת הדף ובסופה #code= ואחריו הקוד. הקוד נשמר בטלפון ונמחק משורת הכתובת.</div>
         <div class="note">ההקלטה נשלחת דרך השירות ל-ElevenLabs כדי להחליף את הקול, ולא נשמרת בדף. גובה הצליל מחושב במכשיר. מהירות וגובה צליל לא חלים על ההקלטה המקורית.</div>
       </div>
     </div>
   </details>
+</div>
+<div class="card admin" id="adminpanel">
+  <h3>ניהול</h3>
+  <div id="adminlogin">
+    <label class="lbl" for="admincode">קוד אדמין</label>
+    <input id="admincode" type="password" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <div class="row"><button class="p" id="adminbtn" type="button">כניסת מנהל</button></div>
+  </div>
+  <div id="adminarea" hidden>
+    <div class="stat"><span>המרות היום</span><b id="usedval"></b></div>
+    <div class="stat"><span>נעילות פעילות</span><b id="locksval"></b></div>
+    <div class="row"><button id="unlockall" type="button">שחרור כל הנעילות</button></div>
+    <div class="row"><button id="resetquota" type="button">איפוס המכסה היומית</button></div>
+    <div class="row"><button id="adminrefresh" type="button">רענון</button></div>
+  </div>
+  <div class="note" id="adminmsg"></div>
+  <div class="note">אי אפשר לשנות כאן את הקודים. הם מוגדרים רק בקלאודפלייר.</div>
 </div>
 </main>
 
@@ -243,6 +284,7 @@ var PitchShift=(function(){
   var WORKER_URL='https://announcer-token.eyasualemu0.workers.dev';
   var MIN_MS=600;     // shorter than this is treated as an accidental tap
   var LS='announcer-voice-changer-v1';
+  var LS_SESSION='announcer-session-v1';
   var ADMIN=/[?&]admin=1(&|$)/.test(location.search);
   if(ADMIN)document.body.classList.add('is-admin');
 
@@ -251,15 +293,6 @@ var PitchShift=(function(){
   var DEFAULTS={rate:1,pitch:2.5,maxSec:3,noise:true};
   var settings={noise:DEFAULTS.noise,worker:'',rate:DEFAULTS.rate,pitch:DEFAULTS.pitch,maxSec:DEFAULTS.maxSec,code:''};
   try{var s=JSON.parse(localStorage.getItem(LS)||'{}');for(var k in s)if(k in settings)settings[k]=s[k]}catch(e){}
-  // A setup link ending in #code=... stores the access code on this device and removes it from the address bar.
-  function readHashCode(){
-    var m=/[#&]code=([^&]*)/.exec(location.hash);
-    if(!m)return false;
-    try{settings.code=decodeURIComponent(m[1]).trim()}catch(e){}
-    try{history.replaceState(null,'',location.pathname+location.search)}catch(e){location.hash=''}
-    return true;
-  }
-  if(readHashCode())try{localStorage.setItem(LS,JSON.stringify(settings))}catch(e){}
   function clamp(v,lo,hi,def){v=Number(v);return isFinite(v)?Math.min(hi,Math.max(lo,v)):def}
   settings.rate=clamp(settings.rate,0.6,1.3,DEFAULTS.rate);settings.pitch=clamp(settings.pitch,-4,4,DEFAULTS.pitch);settings.maxSec=Math.round(clamp(settings.maxSec,3,8,DEFAULTS.maxSec));
   function save(){try{localStorage.setItem(LS,JSON.stringify(settings))}catch(e){}}
@@ -405,6 +438,88 @@ var PitchShift=(function(){
     convert(blob);
   }
 
+  // ---------- Service ----------
+  // mode is 'v2' once the service answers with daily sessions, or 'legacy' while it still runs the
+  // previous version; the page keeps working with both during the switch.
+  var mode='',session=null,pending=null,detecting=null;
+  try{session=JSON.parse(localStorage.getItem(LS_SESSION)||'null')}catch(e){}
+  function sessionValid(){return !!(session&&session.token&&session.exp>Date.now())}
+  function saveSession(s){session=s;try{if(s)localStorage.setItem(LS_SESSION,JSON.stringify(s));else localStorage.removeItem(LS_SESSION)}catch(e){}}
+  function fallbackUrl(){return WORKER_URL.replace(/\/+$/,'')}
+  // JSON sent as text/plain, so the older service can still answer it without a preflight.
+  function postJson(base,path,body,headers){
+    var h={'Content-Type':'text/plain'};for(var k in headers||{})h[k]=headers[k];
+    return fetch(base+path,{method:'POST',body:JSON.stringify(body||{}),headers:h,cache:'no-store'}).then(function(r){
+      return r.json().catch(function(){return {}}).then(function(j){j=j||{};j.httpStatus=r.status;return j});
+    });
+  }
+  function useFallback(){settings.worker='';save();$('worker').value=fallbackUrl()}
+  function detect(){
+    if(detecting)return detecting;
+    var base=workerUrl(),fb=fallbackUrl();
+    function ask(b){return postJson(b,'/session',{token:session?session.token:''})}
+    // An old address saved on this device: go back to the one in the code, and forget it if that works.
+    function viaFallback(j){
+      if(!settings.worker||base===fb){if(j)return j;throw new Error('offline')}
+      return ask(fb).then(function(j2){if(j2.v===2||!j){useFallback();return j2}return j},function(e){if(j)return j;throw e});
+    }
+    detecting=ask(base).then(function(j){return j.v===2?j:viaFallback(j)},function(e){return viaFallback(null)}).then(function(j){
+      mode=j.v===2?'v2':'legacy';
+      if(mode==='v2'){
+        if(!j.ok)saveSession(null);
+        if(!sessionValid()&&!ADMIN)showLogin('הזינו את הקוד בן 6 הספרות');
+      }
+      return mode;
+    });
+    detecting.then(function(){detecting=null},function(){detecting=null});
+    return detecting;
+  }
+
+  // ---------- Daily code ----------
+  function timeText(ms,withDate){
+    var o={timeZone:'Asia/Jerusalem',hour:'2-digit',minute:'2-digit'};
+    if(withDate){o.day='numeric';o.month='numeric'}
+    try{return new Date(ms).toLocaleString('he-IL',o)}catch(e){return new Date(ms).toLocaleString()}
+  }
+  function loginMsg(t,bad){$('loginmsg').textContent=t;$('loginmsg').className=bad?'bad':''}
+  function showLogin(msg){
+    loginMsg(msg||'הזינו את הקוד בן 6 הספרות');
+    $('pin').value='';$('login').hidden=false;
+    try{$('pin').focus()}catch(e){}
+  }
+  function hideLogin(){$('login').hidden=true;try{$('pin').blur()}catch(e){}}
+  function submitLogin(){
+    unlockAudio();
+    var code=$('pin').value.replace(/\D/g,'');
+    if(code.length!==6){loginMsg('יש להזין 6 ספרות.',true);return}
+    $('loginbtn').disabled=true;loginMsg('בודק...');
+    postJson(workerUrl(),'/login',{code:code}).then(function(j){
+      $('pin').value='';
+      if(j.token){
+        saveSession({token:j.token,exp:j.exp});hideLogin();
+        setChip('ok','✓ מחובר עד חצות');
+        if(pending){var b=pending;pending=null;convert(b)}else setState('מוכן');
+        return;
+      }
+      if(j.error==='locked')loginMsg('יותר מדי ניסיונות שגויים. אפשר לנסות שוב בשעה '+timeText(j.until)+'.',true);
+      else if(j.error==='wrong-code')loginMsg(j.left===1?'קוד שגוי. נשאר ניסיון אחד.':'קוד שגוי. נשארו '+j.left+' ניסיונות.',true);
+      else if(j.error==='bad-config')loginMsg('קוד הכניסה לא מוגדר נכון בשירות. פנו למנהל.',true);
+      else loginMsg('שגיאה בשירות. נסו שוב.',true);
+    },function(){loginMsg('אין חיבור לשירות. בדקו את האינטרנט.',true)}).then(function(){$('loginbtn').disabled=false});
+  }
+  $('loginform').onsubmit=function(e){e.preventDefault();submitLogin()};
+  $('pin').oninput=function(){
+    var v=this.value.replace(/\D/g,'').slice(0,6);
+    if(v!==this.value)this.value=v;
+    if(v.length===6)submitLogin();
+  };
+  $('logincancel').onclick=function(){hideLogin()};
+  // The session ends at midnight; ask again as soon as it does, and recheck with the service on return.
+  setInterval(function(){
+    if(mode==='v2'&&!sessionValid()&&$('login').hidden&&!ADMIN&&!busy)showLogin('הקוד היומי פג. הזינו את הקוד שוב.');
+  },30000);
+  document.addEventListener('visibilitychange',function(){if(!document.hidden)detect().catch(function(){})});
+
   // ---------- Voice changer ----------
   function errorText(j,status){
     var d=(j&&j.detail)||'',e=(j&&j.error)||'';
@@ -420,14 +535,17 @@ var PitchShift=(function(){
   function send(base,blob,noCode){
     var url=base+'/voice-changer'+(settings.noise?'?noise=1':'');
     var headers={'Content-Type':blob.type.split(';')[0]||'application/octet-stream'};
-    var withCode=!!settings.code&&!noCode;
+    var withCode=mode==='legacy'&&!!settings.code&&!noCode;
+    if(mode==='v2'&&session)headers['X-Session']=session.token;
     if(withCode)headers['X-Access-Code']=settings.code;
     return fetch(url,{method:'POST',body:blob,headers:headers,cache:'no-store'}).then(function(r){
       if(!r.ok)return r.json().catch(function(){return null}).then(function(j){
         var err=new Error(errorText(j,r.status));
         // These come from a working service, so the address itself is fine.
-        err.serviceOk=!!j&&/^(elevenlabs-error|elevenlabs-unreachable|too-large|empty|need-code)$/.test(j.error||'');
+        err.serviceOk=!!j&&/^(elevenlabs-error|elevenlabs-unreachable|too-large|empty|need-code|need-login|daily-limit)$/.test(j.error||'');
         err.needCode=!!j&&j.error==='need-code';
+        err.needLogin=!!j&&j.error==='need-login';
+        err.dailyLimit=!!j&&j.error==='daily-limit';
         throw err;
       });
       return r.blob();
@@ -436,18 +554,20 @@ var PitchShift=(function(){
       return out;
     },function(e){
       if(e&&e.serviceOk!==undefined)throw e;
-      // A service that does not know about access codes yet refuses the extra header; try once without it.
+      // The older service refuses the extra header; try once without it.
       if(withCode)return send(base,blob,true);
       var err=new Error('אין חיבור לשירות. בדקו את האינטרנט.');err.serviceOk=false;throw err;
     });
   }
   function convert(blob){
     setBusy(true);setState('מחליף קול...');setChip('','מעבד...');
-    var base=workerUrl(),fallback=WORKER_URL.replace(/\/+$/,'');
-    send(base,blob).catch(function(e){
-      // An old address saved on this device: go back to the one in the code, and forget it if that works.
-      if(e.serviceOk||!settings.worker||base===fallback)throw e;
-      return send(fallback,blob).then(function(out){settings.worker='';save();$('worker').value=fallback;return out});
+    var base=workerUrl(),fb=fallbackUrl();
+    (mode?Promise.resolve(mode):detect()).then(function(){
+      if(mode==='v2'&&!sessionValid()){var e=new Error('need-login');e.needLogin=true;throw e}
+      return send(base,blob).catch(function(e){
+        if(e.serviceOk||!settings.worker||base===fb)throw e;
+        return send(fb,blob).then(function(out){useFallback();return out});
+      });
     }).then(function(out){
       setResult(out);
       $('again').disabled=false;
@@ -456,9 +576,20 @@ var PitchShift=(function(){
       playResult();
     }).catch(function(e){
       setBusy(false);
+      if(e.needLogin){
+        // Keep the recording, so it is sent as soon as the guard enters the code.
+        pending=blob;saveSession(null);
+        setChip('','נדרש קוד');setState('יש להזין את הקוד היומי. אחרי הכניסה ההכרזה תישלח.');
+        showLogin('הזינו את הקוד היומי. ההכרזה תישלח מיד אחרי הכניסה.');
+        return;
+      }
+      if(e.dailyLimit){
+        setChip('bad','המכסה היומית הסתיימה');
+        setState('המכסה היומית של ההכרזות הסתיימה. אפשר להשמיע את ההקלטה המקורית.');
+        return;
+      }
       setChip('bad','לא הצליח');
       if(e.needCode){
-        // Keep the recording, so it is sent again as soon as the code is saved.
         pending=blob;
         askCode(settings.code?'הקוד שנשמר בטלפון הזה לא נכון. יש להזין את קוד הגישה.':'יש להזין את קוד הגישה פעם אחת. הוא יישמר בטלפון הזה.');
         setState('נדרש קוד גישה. אחרי השמירה ההכרזה תישלח שוב.');
@@ -468,8 +599,7 @@ var PitchShift=(function(){
     });
   }
 
-  // ---------- Access code ----------
-  var pending=null;
+  // ---------- Access code of the previous service version (used only until it is updated) ----------
   function askCode(msg){
     $('codemsg').textContent=msg;$('code').value=settings.code;$('codecard').hidden=false;
     $('codecard').scrollIntoView({behavior:'smooth',block:'center'});
@@ -477,14 +607,45 @@ var PitchShift=(function(){
   $('codesave').onclick=function(){
     unlockAudio();
     settings.code=$('code').value.trim();save();
-    if(!ADMIN)$('codecard').hidden=true;
+    $('codecard').hidden=true;
     if(pending&&settings.code){var b=pending;pending=null;convert(b)}
     else setState(settings.code?'הקוד נשמר.':'הקוד נמחק מהטלפון הזה.');
   };
-  // The setup link opened while the page is already open in the same tab.
-  window.addEventListener('hashchange',function(){if(readHashCode()){save();$('code').value=settings.code;$('codecard').hidden=!ADMIN;setState('קוד הגישה נשמר בטלפון הזה.')}});
-  // The administrator can always see and change the code.
-  if(ADMIN){$('code').value=settings.code;$('codecard').hidden=false}
+
+  // ---------- Administration (?admin=1) ----------
+  var adminToken='';
+  function adminMsg(t){$('adminmsg').textContent=t}
+  function showAdminArea(j){
+    $('adminlogin').hidden=true;$('adminarea').hidden=false;
+    $('usedval').textContent=j.used+' מתוך '+j.limit;
+    $('locksval').textContent=String(j.locks);
+  }
+  function adminLoggedOut(msg){adminToken='';$('adminarea').hidden=true;$('adminlogin').hidden=false;adminMsg(msg)}
+  function adminCall(path,doneMsg){
+    adminMsg('...');
+    return postJson(workerUrl(),path,{},{'X-Admin-Session':adminToken}).then(function(j){
+      if(j.error==='need-admin'){adminLoggedOut('הכניסה פגה. הזינו שוב את קוד האדמין.');return}
+      if(!j.ok){adminMsg('שגיאה בשירות. נסו שוב.');return}
+      showAdminArea(j);adminMsg(typeof doneMsg==='function'?doneMsg(j):(doneMsg||''));
+    },function(){adminMsg('אין חיבור לשירות.')});
+  }
+  $('adminbtn').onclick=function(){
+    var code=$('admincode').value.trim();
+    if(!code){adminMsg('הזינו את קוד האדמין.');return}
+    $('adminbtn').disabled=true;adminMsg('בודק...');
+    postJson(workerUrl(),'/admin/login',{code:code}).then(function(j){
+      $('admincode').value='';
+      if(j.token){adminToken=j.token;return adminCall('/admin/status','')}
+      if(j.v!==2)adminMsg('השירות עדיין בגרסה הקודמת. יש לחבר את הפריסה האוטומטית בקלאודפלייר.');
+      else if(j.error==='locked')adminMsg('מסך הניהול נעול בגלל ניסיונות שגויים, עד '+timeText(j.until,true)+'.');
+      else if(j.error==='wrong-code')adminMsg(j.left===1?'קוד שגוי. נשאר ניסיון אחד.':'קוד שגוי. נשארו '+j.left+' ניסיונות.');
+      else if(j.error==='bad-config')adminMsg('קוד האדמין לא מוגדר בשירות.');
+      else adminMsg('שגיאה בשירות. נסו שוב.');
+    },function(){adminMsg('אין חיבור לשירות.')}).then(function(){$('adminbtn').disabled=false});
+  };
+  $('unlockall').onclick=function(){adminCall('/admin/unlock',function(j){return j.unlocked?'שוחררו '+j.unlocked+' נעילות.':'לא היו נעילות פעילות. כל הספירות אופסו.'})};
+  $('resetquota').onclick=function(){if(confirm('לאפס את המכסה היומית?'))adminCall('/admin/reset-quota','המכסה היומית אופסה.')};
+  $('adminrefresh').onclick=function(){adminCall('/admin/status','')};
 
   // ---------- Settings ----------
   // The number sits in its own left-to-right box so signs and digits read correctly inside Hebrew text.
@@ -524,6 +685,7 @@ var PitchShift=(function(){
   };
   $('again').onclick=function(){unlockAudio();playResult()};
   $('orig').onclick=function(){unlockAudio();stopAudio();if(origUrl)play(origUrl,false)};
+  detect().catch(function(){});
 })();
 </script>
 </body>

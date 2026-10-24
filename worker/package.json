@@ -1,0 +1,8 @@
+{
+  "name": "announcer-token",
+  "private": true,
+  "description": "Cloudflare Worker for the announcer pages; deployed by Workers Builds with `npx wrangler deploy`.",
+  "devDependencies": {
+    "wrangler": "4.152.0"
+  }
+}

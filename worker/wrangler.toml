@@ -1,0 +1,21 @@
+# Read by Cloudflare Workers Builds: every push to main deploys this folder as the "announcer-token" Worker.
+# The name must stay identical to the Worker's name in the Cloudflare dashboard.
+name = "announcer-token"
+main = "worker.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+# Only the one known address; no extra per-version preview addresses.
+preview_urls = false
+
+# Keep the plain variables set in the dashboard (DAILY_LIMIT, AZURE_SPEECH_REGION, ...) on every deploy.
+# Secrets are never touched by a deploy.
+keep_vars = true
+
+# Lockouts and the daily count. Created automatically on the first deploy; nothing to set up by hand.
+[[durable_objects.bindings]]
+name = "STATE"
+class_name = "AnnouncerState"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["AnnouncerState"]
