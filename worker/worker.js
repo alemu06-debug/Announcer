@@ -3,23 +3,20 @@
 //   Secret    ELEVENLABS_API_KEY   - the ElevenLabs API key
 //   Secret    ACCESS_CODE          - the guard's 6-digit daily code
 //   Secret    ADMIN_CODE           - the administrator's code
-//   Secret    AZURE_SPEECH_KEY     - the Azure Speech key (old azure.html page only)
-//   Variable  AZURE_SPEECH_REGION  - e.g. westeurope (old azure.html page only)
 //   Variable  DAILY_LIMIT          - optional; voice changes allowed per day for the whole system, default 30
 //                                    (set in the dashboard only; wrangler.toml keeps it on every deploy)
 //   Variable  ALLOWED_ORIGINS      - optional, comma separated; default below
 //   Variable  ELEVENLABS_VOICE_ID  - optional; default below
 // Lockouts and the daily count live in one Durable Object (AnnouncerState), created automatically on deploy.
 //
-// Routes (all need an allowed Origin):
-//   POST /session            {token}  -> is the guard's session still valid, and today's usage
+// Routes (all need an allowed Origin; anything else gets 404 without touching the shared state):
+//   POST /session            {token}  -> is the guard's session still valid; today's usage only if it is
 //   POST /login              {code}   -> session token valid until midnight Israel time
 //   POST /voice-changer      header X-Session; body is a short recording -> MP3 in the ElevenLabs voice
 //   POST /admin/login        {code}   -> administrator token valid for one hour
 //   POST /admin/status       header X-Admin-Session -> today's usage and active lockouts
 //   POST /admin/unlock       header X-Admin-Session -> lifts every guard lockout
 //   POST /admin/reset-quota  header X-Admin-Session -> sets today's count back to zero
-//   GET  (any other path)    header X-Session -> short-lived Azure Speech token (old azure.html page)
 import { DurableObject } from 'cloudflare:workers';
 
 const DEFAULT_ORIGINS = 'https://alemu06-debug.github.io';
@@ -90,19 +87,26 @@ function sameBytes(a, b) {
 }
 // The signing key mixes a random secret kept in the Durable Object with the current code,
 // so changing a code in Cloudflare ends every session made with the old one.
-async function makeToken(root, kind, code, exp) {
-  const body = b64u(enc.encode(JSON.stringify({ k: kind, exp })));
-  return `${body}.${b64u(await hmac(await hmac(root, `${kind}|${code}`), body))}`;
+// The random secret never changes once created, so each Worker instance fetches it at most once.
+let rootCache = null;
+async function rootKey(store) {
+  if (!rootCache) rootCache = unb64u(await store.rootKey());
+  return rootCache;
 }
-async function readToken(root, kind, code, token) {
-  if (!code || !token || token.length > 400) return null;
+async function makeToken(store, kind, code, exp) {
+  const body = b64u(enc.encode(JSON.stringify({ k: kind, exp })));
+  return `${body}.${b64u(await hmac(await hmac(await rootKey(store), `${kind}|${code}`), body))}`;
+}
+async function readToken(store, kind, code, token) {
+  if (!code || !/^[A-Za-z0-9_-]{8,200}\.[A-Za-z0-9_-]{43}$/.test(token || '')) return null;
   const [body, sig] = token.split('.');
-  if (!body || !sig) return null;
   try {
-    const want = await hmac(await hmac(root, `${kind}|${code}`), body);
-    if (!sameBytes(want, unb64u(sig))) return null;
+    // Shape, kind and expiry are checked first, so a missing, malformed or expired token
+    // is turned away without touching the shared state.
     const p = JSON.parse(new TextDecoder().decode(unb64u(body)));
-    return p.k === kind && p.exp > Date.now() ? p : null;
+    if (p.k !== kind || !(p.exp > Date.now())) return null;
+    const want = await hmac(await hmac(await rootKey(store), `${kind}|${code}`), body);
+    return sameBytes(want, unb64u(sig)) ? p : null;
   } catch (e) {
     return null;
   }
@@ -173,7 +177,7 @@ export class AnnouncerState extends DurableObject {
   }
 }
 
-// ---------- ElevenLabs and Azure ----------
+// ---------- ElevenLabs ----------
 async function voiceChanger(request, env, audio, type, cors) {
   const key = env.ELEVENLABS_API_KEY;
   const voiceId = (env.ELEVENLABS_VOICE_ID || DEFAULT_VOICE_ID).trim();
@@ -208,26 +212,6 @@ async function voiceChanger(request, env, audio, type, cors) {
   });
 }
 
-async function azureToken(env, cors) {
-  const key = env.AZURE_SPEECH_KEY;
-  const region = (env.AZURE_SPEECH_REGION || '').trim().toLowerCase();
-  if (!key || !/^[a-z0-9]+$/.test(region)) return reply({ error: 'not-configured' }, 500, cors);
-
-  let res;
-  try {
-    res = await fetch(`https://${region}.api.cognitive.microsoft.com/sts/v1.0/issueToken`, {
-      method: 'POST',
-      headers: { 'Ocp-Apim-Subscription-Key': key, 'Content-Length': '0' },
-    });
-  } catch (e) {
-    return reply({ error: 'azure-unreachable' }, 502, cors);
-  }
-  if (!res.ok) return reply({ error: 'azure-error', status: res.status }, 502, cors);
-
-  // Azure tokens are valid for 10 minutes; the page refreshes before that.
-  return reply({ token: await res.text(), region, expiresIn: 600 }, 200, cors);
-}
-
 // ---------- Requests ----------
 function dailyLimit(env) {
   const n = parseInt(env.DAILY_LIMIT, 10);
@@ -244,31 +228,34 @@ async function readJson(request) {
 async function handle(request, env, cors) {
   const path = new URL(request.url).pathname.replace(/\/+$/, '') || '/';
   const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+  // Getting the handle does not contact the shared state; only calls on it do.
   const store = env.STATE.get(env.STATE.idFromName('main'));
-  const root = unb64u(await store.rootKey());
   const now = Date.now();
   const day = israelDay(now);
   const limit = dailyLimit(env);
   const guardCode = (env.ACCESS_CODE || '').trim();
   const adminCode = (env.ADMIN_CODE || '').trim();
   const post = request.method === 'POST';
-  const guardSession = () => (/^\d{6}$/.test(guardCode) ? readToken(root, 'g', guardCode, request.headers.get('X-Session') || '') : null);
-  const adminSession = () => (adminCode ? readToken(root, 'a', adminCode, request.headers.get('X-Admin-Session') || '') : null);
+  const guardSession = () => (/^\d{6}$/.test(guardCode) ? readToken(store, 'g', guardCode, request.headers.get('X-Session') || '') : null);
+  const adminSession = () => (adminCode ? readToken(store, 'a', adminCode, request.headers.get('X-Admin-Session') || '') : null);
 
   if (post && path === '/session') {
     const { token } = await readJson(request);
-    const s = /^\d{6}$/.test(guardCode) ? await readToken(root, 'g', guardCode, String(token || '')) : null;
-    return reply({ ok: !!s, exp: s ? s.exp : 0, used: await store.usage(day), limit }, 200, cors);
+    const s = /^\d{6}$/.test(guardCode) ? await readToken(store, 'g', guardCode, String(token || '')) : null;
+    // Today's usage is shown only to a valid session.
+    return reply(s ? { ok: true, exp: s.exp, used: await store.usage(day), limit } : { ok: false }, 200, cors);
   }
 
   if (post && path === '/login') {
     if (!/^\d{6}$/.test(guardCode)) return reply({ error: 'bad-config' }, 500, cors);
-    const { code } = await readJson(request);
-    const r = await store.attempt('guard', ip, String(code || '').trim().slice(0, 32), guardCode, GUARD_LOCK.max, GUARD_LOCK.ms);
+    const code = String((await readJson(request)).code || '').trim();
+    // Anything that is not 6 digits can never be right; refuse it without touching the shared state.
+    if (!/^\d{6}$/.test(code)) return reply({ error: 'bad-format' }, 400, cors);
+    const r = await store.attempt('guard', ip, code, guardCode, GUARD_LOCK.max, GUARD_LOCK.ms);
     if (r.locked) return reply({ error: 'locked', until: r.until }, 429, cors);
     if (!r.ok) return reply({ error: 'wrong-code', left: r.left }, 401, cors);
     const exp = nextIsraelMidnight(now);
-    return reply({ token: await makeToken(root, 'g', guardCode, exp), exp }, 200, cors);
+    return reply({ token: await makeToken(store, 'g', guardCode, exp), exp }, 200, cors);
   }
 
   if (path === '/voice-changer') {
@@ -291,11 +278,12 @@ async function handle(request, env, cors) {
     if (!post) return reply({ error: 'method-not-allowed' }, 405, cors);
     if (path === '/admin/login') {
       if (!adminCode) return reply({ error: 'bad-config' }, 500, cors);
-      const { code } = await readJson(request);
-      const r = await store.attempt('admin', ip, String(code || '').trim().slice(0, 200), adminCode, ADMIN_LOCK.max, ADMIN_LOCK.ms);
+      const code = String((await readJson(request)).code || '').trim().slice(0, 200);
+      if (!code) return reply({ error: 'bad-format' }, 400, cors);
+      const r = await store.attempt('admin', ip, code, adminCode, ADMIN_LOCK.max, ADMIN_LOCK.ms);
       if (r.locked) return reply({ error: 'locked', until: r.until }, 429, cors);
       if (!r.ok) return reply({ error: 'wrong-code', left: r.left }, 401, cors);
-      return reply({ token: await makeToken(root, 'a', adminCode, now + ADMIN_SESSION_MS) }, 200, cors);
+      return reply({ token: await makeToken(store, 'a', adminCode, now + ADMIN_SESSION_MS) }, 200, cors);
     }
     if (!(await adminSession())) return reply({ error: 'need-admin' }, 401, cors);
     let unlocked = 0;
@@ -305,9 +293,7 @@ async function handle(request, env, cors) {
     return reply({ ok: true, unlocked, used: await store.usage(day), limit, locks: await store.guardLocks() }, 200, cors);
   }
 
-  if (request.method !== 'GET') return reply({ error: 'method-not-allowed' }, 405, cors);
-  if (!(await guardSession())) return reply({ error: 'need-login' }, 401, cors);
-  return azureToken(env, cors);
+  return reply({ error: 'not-found' }, 404, cors);
 }
 
 export default {
@@ -318,7 +304,7 @@ export default {
     const cors = ok
       ? {
           'Access-Control-Allow-Origin': origin,
-          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+          'Access-Control-Allow-Methods': 'POST, OPTIONS',
           'Access-Control-Allow-Headers': 'Content-Type, X-Session, X-Admin-Session',
           'Access-Control-Max-Age': '86400',
           Vary: 'Origin',

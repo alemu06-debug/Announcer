@@ -7,7 +7,7 @@ workers_dev = true
 # Only the one known address; no extra per-version preview addresses.
 preview_urls = false
 
-# Keep the plain variables set in the dashboard (DAILY_LIMIT, AZURE_SPEECH_REGION, ...) on every deploy.
+# Keep the plain variables set in the dashboard (DAILY_LIMIT, ...) on every deploy.
 # Secrets are never touched by a deploy.
 keep_vars = true
 
