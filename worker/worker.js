@@ -6,6 +6,7 @@
 //   Secret    AZURE_SPEECH_KEY     - the Azure Speech key (old azure.html page only)
 //   Variable  AZURE_SPEECH_REGION  - e.g. westeurope (old azure.html page only)
 //   Variable  DAILY_LIMIT          - optional; voice changes allowed per day for the whole system, default 30
+//                                    (set in the dashboard only; wrangler.toml keeps it on every deploy)
 //   Variable  ALLOWED_ORIGINS      - optional, comma separated; default below
 //   Variable  ELEVENLABS_VOICE_ID  - optional; default below
 // Lockouts and the daily count live in one Durable Object (AnnouncerState), created automatically on deploy.
